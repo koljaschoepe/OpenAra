@@ -1,0 +1,60 @@
+# Device configuration (contains user-specific data)
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.key
+*.pem
+*.env.local
+*.env.*
+!.env.example
+
+# Logs
+*.log
+/logs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Documents
+*.docx
+*.doc
+*.pdf
+
+# Archives
+*.tar.gz
+*.zip
+
+# Internal planning docs (local only, not published)
+/plans/
+/docs/plans/
+
+# Task tracking (local only, session-specific)
+/tasks/
+
+# Claude Code local overrides
+CLAUDE.local.md

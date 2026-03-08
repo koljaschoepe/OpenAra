@@ -1,0 +1,11 @@
+# === arasul dev aliases (jetson) ===
+
+# GPU / Power management
+alias gpu='sudo tegrastats'
+alias powermode='sudo nvpmodel -q'
+alias maxperf='sudo nvpmodel -m 3 && sudo jetson_clocks'
+alias lowpower='sudo nvpmodel -m 0'
+
+# Storage (path substituted at install time by 07-quality-of-life.sh)
+alias storage='cd __STORAGE_MOUNT__'
+alias disk='df -h __STORAGE_MOUNT__ 2>/dev/null; df -h /'

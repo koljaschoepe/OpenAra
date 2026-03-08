@@ -1,0 +1,7 @@
+# PyTorch — installed via NVIDIA Jetson wheels
+torch
+torchvision
+# Vision
+opencv-python-headless
+ultralytics
+numpy

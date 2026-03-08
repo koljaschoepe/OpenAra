@@ -1,0 +1,11 @@
+services:
+  vision:
+    build: .
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - .:/app
+      - /dev/video0:/dev/video0
+    working_dir: /app
+    command: python detect.py

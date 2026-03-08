@@ -1,0 +1,39 @@
+# === arasul dev aliases (common) ===
+
+# tmux
+alias t='tmux attach -t dev 2>/dev/null || tmux new -s dev'
+alias tn='tmux new -s'
+alias ta='tmux attach -t'
+alias tl='tmux list-sessions'
+
+# Claude Code
+alias c='claude'
+alias cc='claude --continue'
+alias atui='arasul'
+
+# System monitoring
+alias temps='cat /sys/devices/virtual/thermal/thermal_zone*/type /sys/devices/virtual/thermal/thermal_zone*/temp 2>/dev/null | paste - - | column -t'
+alias ram='free -h'
+alias disk='df -h / 2>/dev/null'
+alias ports='sudo lsof -i -P -n | grep LISTEN'
+
+# Docker
+alias d='docker'
+alias dc='docker compose'
+alias dps='docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
+alias dlogs='docker logs -f'
+alias dprune='docker system prune -af --volumes'
+
+# Navigation
+alias p='cd ~/projects'
+
+# Git
+alias gs='git status -sb'
+alias gl='git log --oneline -20'
+alias gp='git push'
+alias gpl='git pull'
+
+# Safety
+alias rm='rm -i'
+alias mv='mv -i'
+alias cp='cp -i'
