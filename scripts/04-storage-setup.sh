@@ -15,7 +15,7 @@ source "$(dirname "$0")/../lib/detect.sh"
 
 # Defaults for standalone execution
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
-REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6 || echo "$HOME")}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 
 # ---------------------------------------------------------------------------
 # Swap sizing based on detected RAM
@@ -33,6 +33,10 @@ setup_swap_ram_based() {
 
     # Use SWAP_SIZE from .env if set, otherwise compute from RAM
     if [[ -n "${SWAP_SIZE:-}" ]] && [[ "$SWAP_SIZE" != "auto" ]]; then
+        if [[ ! "$SWAP_SIZE" =~ ^[0-9]+G$ ]]; then
+            err "SWAP_SIZE must be in format like '8G' (got: $SWAP_SIZE)"
+            return 1
+        fi
         swap_size="$SWAP_SIZE"
     else
         local ram_mb
@@ -59,8 +63,8 @@ setup_swap_ram_based() {
 
         # Disable zram swap if present (Jetson default)
         systemctl disable nvzramconfig 2>/dev/null || true
-        swapoff -a 2>/dev/null || true
 
+        # Create new swap FIRST (before disabling old — prevents OOM on 4GB devices)
         # fallocate is fastest but fails on some filesystems (Btrfs, XFS with reflink)
         fallocate -l "$swap_size" "$swap_file" 2>/dev/null || {
             local size_gb="${swap_size%G}"
@@ -68,6 +72,13 @@ setup_swap_ram_based() {
         }
         chmod 600 "$swap_file"
         mkswap "$swap_file"
+
+        # Now deactivate old swap entries (not the system swap blindly)
+        while IFS= read -r old_swap; do
+            [[ "$old_swap" == "$swap_file" ]] && continue
+            swapoff "$old_swap" 2>/dev/null || true
+        done < <(swapon --show=NAME --noheadings 2>/dev/null)
+
         swapon "$swap_file"
 
         if ! grep -q "$swap_file" /etc/fstab; then
@@ -129,7 +140,7 @@ fi
 # ---------------------------------------------------------------------------
 # External storage detected — validate device
 # ---------------------------------------------------------------------------
-if ! lsblk "$STORAGE_DEVICE" &>/dev/null 2>&1; then
+if ! lsblk "$STORAGE_DEVICE" &>/dev/null; then
     err "Storage device not found: ${STORAGE_DEVICE}"
     err "Check that the device is connected and try again"
     exit 1
@@ -160,10 +171,18 @@ fi
 # ---------------------------------------------------------------------------
 # Partition and format
 # ---------------------------------------------------------------------------
-if ! lsblk -f "$STORAGE_PART" &>/dev/null 2>&1; then
+if ! lsblk -f "$STORAGE_PART" &>/dev/null; then
     warn "Partitioning ${STORAGE_DEVICE} — ALL DATA WILL BE ERASED"
-    echo "Waiting 5 seconds — Ctrl+C to abort..."
-    sleep 5
+    if [[ "${AUTO_CONFIRM:-false}" != "true" ]]; then
+        read -rp "Type 'YES' to confirm: " confirm
+        if [[ "$confirm" != "YES" ]]; then
+            err "Aborted by user"
+            exit 1
+        fi
+    else
+        echo "Auto-confirm enabled — proceeding in 5 seconds..."
+        sleep 5
+    fi
 
     parted -s "$STORAGE_DEVICE" mklabel gpt
     parted -s "$STORAGE_DEVICE" mkpart primary ext4 0% 100%
@@ -199,6 +218,10 @@ fi
 
 # fstab entry (UUID-based for stability)
 STORAGE_UUID=$(blkid -s UUID -o value "$STORAGE_PART")
+if [[ -z "$STORAGE_UUID" ]]; then
+    err "Cannot determine filesystem UUID for ${STORAGE_PART}"
+    exit 1
+fi
 if ! grep -q "$STORAGE_UUID" /etc/fstab 2>/dev/null; then
     # Remove old device-path-based entries
     sed -i "\|${STORAGE_PART}|d" /etc/fstab 2>/dev/null || true
@@ -356,7 +379,12 @@ fi
 # ---------------------------------------------------------------------------
 LINK="${REAL_HOME}/projects"
 if [[ ! -L "$LINK" ]]; then
-    ln -sf "${STORAGE_MOUNT}/projects" "$LINK"
+    # If ~/projects is a real directory (not a symlink), back it up first
+    if [[ -d "$LINK" ]]; then
+        warn "$LINK exists as a directory — backing up to ${LINK}.bak"
+        mv "$LINK" "${LINK}.bak"
+    fi
+    ln -sfn "${STORAGE_MOUNT}/projects" "$LINK"
     chown -h "${REAL_USER}:${REAL_USER}" "$LINK"
     log "Symlink: ~/projects → ${STORAGE_MOUNT}/projects"
 fi

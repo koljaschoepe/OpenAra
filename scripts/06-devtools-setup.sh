@@ -4,6 +4,7 @@
 # Node.js (nvm), Python venv, Git, Claude Code, jtop (Jetson only)
 # =============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -11,9 +12,11 @@ source "$(dirname "$0")/../lib/common.sh"
 # shellcheck source=../lib/detect.sh
 source "$(dirname "$0")/../lib/detect.sh"
 
+check_root
+
 # Defaults for standalone execution
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
-REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6 || echo "$HOME")}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 PLATFORM="${PLATFORM:-$(detect_platform)}"
 STORAGE_MOUNT="${STORAGE_MOUNT:-$(detect_storage_mount)}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -115,7 +118,7 @@ fi
 # Claude Code
 # ---------------------------------------------------------------------------
 if [[ "${INSTALL_CLAUDE}" == "true" ]]; then
-    if run_as_user "export NVM_DIR='${NVM_DIR}' && source '${NVM_DIR}/nvm.sh' && command -v claude" &>/dev/null 2>&1; then
+    if run_as_user "export NVM_DIR='${NVM_DIR}' && source '${NVM_DIR}/nvm.sh' && command -v claude" &>/dev/null; then
         skip "Claude Code already installed"
     else
         log "Installing Claude Code..."

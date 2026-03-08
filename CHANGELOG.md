@@ -30,8 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **All hardcoded `/mnt/nvme` paths** replaced with `platform.storage.mount`
 - **Docker setup**: NVIDIA runtime only installed on Jetson
 - **setup.sh**: Accepts all platforms (no longer exits on non-Jetson)
-- **CI**: shellcheck covers `lib/detect.sh`, coverage threshold at 56%
-- 362 tests, 58% coverage
+- **CI**: shellcheck covers `lib/detect.sh` + `lib/common.sh`, coverage threshold at 65%
+- 501 tests, 70% coverage
 
 ### Backward Compatibility
 
@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 68 new tests (176 → 244), covering all previously untested command modules
 - Test coverage reporting in CI with 55% minimum threshold
 - Test files: `test_claude_json.py`, `test_shell.py`, `test_mcp_cmd.py`, `test_browser_cmd.py`, `test_tailscale_cmd.py`, `test_git_ops.py`, `test_system_cmd.py`, `test_ai_cmd.py`
+
+*Versions 0.2.x and 0.4.x were internal development milestones (not released).*
 
 ## [0.1.0] - 2026-03-03
 

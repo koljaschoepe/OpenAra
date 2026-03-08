@@ -61,7 +61,7 @@ def test_git_pull_up_to_date(tmp_path: Path):
 def test_git_pull_error(tmp_path: Path):
     with patch("arasul_tui.commands.git_ops.run_cmd", return_value="fatal: not a git repository"):
         result = cmd_git(_state(tmp_path), ["pull"])
-    assert result.ok is True  # Always returns ok=True, error is printed
+    assert result.ok is False
 
 
 def test_git_push_success(tmp_path: Path):

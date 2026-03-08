@@ -29,14 +29,26 @@ else
   BROWSER_CACHE="${HOME}/.cache/ms-playwright"
 fi
 
-echo "[arasul] Installing Playwright Chromium to ${BROWSER_CACHE}..."
-mkdir -p "${BROWSER_CACHE}"
-PLAYWRIGHT_BROWSERS_PATH="${BROWSER_CACHE}" python -m playwright install chromium 2>/dev/null || \
-  echo "[arasul] WARN: Chromium download failed (run /browser install later)"
+# Install Playwright Chromium only if playwright is available
+if python -m playwright --version &>/dev/null; then
+  echo "[arasul] Installing Playwright Chromium to ${BROWSER_CACHE}..."
+  mkdir -p "${BROWSER_CACHE}"
+  PLAYWRIGHT_BROWSERS_PATH="${BROWSER_CACHE}" python -m playwright install chromium 2>/dev/null || \
+    echo "[arasul] WARN: Chromium download failed (run /browser install later)"
+else
+  echo "[arasul] Playwright not installed — skipping Chromium download"
+fi
 
-if ! grep -q "PLAYWRIGHT_BROWSERS_PATH" "${HOME}/.bashrc" 2>/dev/null; then
-  echo "" >> "${HOME}/.bashrc"
-  echo "export PLAYWRIGHT_BROWSERS_PATH=\"${BROWSER_CACHE}\"" >> "${HOME}/.bashrc"
+# Detect shell RC file
+if [[ "${SHELL}" == *"zsh"* ]]; then
+  RC_FILE="${HOME}/.zshrc"
+else
+  RC_FILE="${HOME}/.bashrc"
+fi
+
+if ! grep -q "PLAYWRIGHT_BROWSERS_PATH" "${RC_FILE}" 2>/dev/null; then
+  echo "" >> "${RC_FILE}"
+  echo "export PLAYWRIGHT_BROWSERS_PATH=\"${BROWSER_CACHE}\"" >> "${RC_FILE}"
 fi
 
 echo "[arasul] Creating launcher: /usr/local/bin/arasul"

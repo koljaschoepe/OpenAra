@@ -22,6 +22,8 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: ruff format --check .
+      - name: Run ShellCheck
+        run: shellcheck -x --exclude=SC1091 scripts/*.sh setup.sh arasul_tui/install.sh lib/detect.sh lib/common.sh
       - run: pytest tests/ -v --tb=short --cov=arasul_tui --cov-report=term-missing --cov-fail-under=65
 
   release:
@@ -35,6 +37,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           tar -czf /tmp/openara-${VERSION}.tar.gz \
+            --transform "s,^\.,openara-${VERSION}," \
             --exclude='.git' \
             --exclude='tests' \
             --exclude='__pycache__' \
@@ -43,6 +46,11 @@ jobs:
             --exclude='.ruff_cache' \
             --exclude='.coverage' \
             --exclude='*.egg-info' \
+            --exclude='plans' \
+            --exclude='tasks' \
+            --exclude='CLAUDE.md' \
+            --exclude='CLAUDE.local.md' \
+            --exclude='.github' \
             .
           mv /tmp/openara-${VERSION}.tar.gz .
 

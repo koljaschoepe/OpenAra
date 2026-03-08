@@ -1,10 +1,12 @@
 # SSH Key Setup Guide
 
-This guide helps you set up SSH key authentication from your Mac to your device.
+This guide helps you set up SSH key authentication from your workstation to your device.
 
-## 1. Generate an SSH Key
+## macOS / Linux
 
-Open Terminal on your Mac and run:
+### 1. Generate an SSH Key
+
+Open Terminal and run:
 
 ```bash
 ssh-keygen -t ed25519
@@ -13,7 +15,7 @@ ssh-keygen -t ed25519
 - Press Enter for the default path (`~/.ssh/id_ed25519`)
 - Enter a passphrase (recommended) or press Enter for none
 
-## 2. Copy Your Key to the Device
+### 2. Copy Your Key to the Device
 
 ```bash
 ssh-copy-id username@hostname.local
@@ -21,7 +23,7 @@ ssh-copy-id username@hostname.local
 
 Replace `username` and `hostname` with your actual values. You'll be asked for your password one last time.
 
-## 3. Test the Connection
+### 3. Test the Connection
 
 ```bash
 ssh username@hostname.local
@@ -29,9 +31,9 @@ ssh username@hostname.local
 
 If it connects without asking for a password, you're set.
 
-## 4. Set Up SSH Config (Recommended)
+### 4. Set Up SSH Config (Recommended)
 
-Create or edit `~/.ssh/config` on your Mac:
+Create or edit `~/.ssh/config`:
 
 ```bash
 mkdir -p ~/.ssh/sockets
@@ -59,6 +61,19 @@ ssh mydevice
 ```
 
 See [`config/mac-ssh-config`](../config/mac-ssh-config) for a full template with port forwarding examples.
+
+## Windows
+
+### Option A: WSL (recommended)
+
+Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the macOS/Linux steps above inside WSL.
+
+### Option B: PowerShell
+
+```powershell
+ssh-keygen -t ed25519
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh username@hostname.local "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+```
 
 ## Troubleshooting
 

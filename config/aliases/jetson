@@ -3,8 +3,9 @@
 # GPU / Power management
 alias gpu='sudo tegrastats'
 alias powermode='sudo nvpmodel -q'
-alias maxperf='sudo nvpmodel -m 3 && sudo jetson_clocks'
-alias lowpower='sudo nvpmodel -m 0'
+# Power modes vary by Jetson model — show available modes before switching
+alias maxperf='echo "Available modes:" && sudo nvpmodel -p --verbose 2>/dev/null && echo "---" && sudo nvpmodel -m ${JETSON_MAXPERF_MODE:-3} && sudo jetson_clocks'
+alias lowpower='echo "Available modes:" && sudo nvpmodel -p --verbose 2>/dev/null && echo "---" && sudo nvpmodel -m ${JETSON_LOWPOWER_MODE:-0}'
 
 # Storage (path substituted at install time by 07-quality-of-life.sh)
 alias storage='cd __STORAGE_MOUNT__'

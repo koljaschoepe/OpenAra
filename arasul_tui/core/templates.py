@@ -6,6 +6,7 @@ and starter code deployment. Miniforge3 is lazily installed on first use.
 
 from __future__ import annotations
 
+import os
 import secrets
 import shutil
 import subprocess
@@ -522,10 +523,12 @@ def scaffold_project(
     claude_md = generate_claude_md(project_name, template)
     (project_dir / "CLAUDE.md").write_text(claude_md)
 
-    # Generate .env
+    # Generate .env (restricted permissions — contains secrets)
     if template.has_dotenv:
         dotenv = generate_dotenv(project_name, template)
-        (project_dir / ".env").write_text(dotenv)
+        env_path = project_dir / ".env"
+        env_path.write_text(dotenv)
+        os.chmod(str(env_path), 0o600)
 
     # Generate .gitignore
     gitignore_lines = [

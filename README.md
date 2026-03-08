@@ -1,10 +1,17 @@
-# Arasul
+# OpenAra
 
 [![CI](https://github.com/koljaschoepe/OpenAra/actions/workflows/ci.yml/badge.svg)](https://github.com/koljaschoepe/OpenAra/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![codecov](https://codecov.io/gh/koljaschoepe/OpenAra/graph/badge.svg)](https://codecov.io/gh/koljaschoepe/OpenAra)
 
 > Turn any Linux SBC into a headless development server. Automated setup for SSH hardening, storage, Docker, dev tools, and an interactive TUI. Supports NVIDIA Jetson, Raspberry Pi, and generic Linux.
+
+**OpenAra** is the project name. The CLI tool and TUI are called **`arasul`**.
+
+<p align="center">
+  <img src="docs/arasul-tui.svg" alt="Arasul TUI" width="700">
+</p>
 
 ## What Is This?
 
@@ -204,10 +211,10 @@ Create projects with pre-configured environments:
 ssh mydevice
 
 # 2. Start tmux (or resume)
-t
+t                           # alias for: tmux attach || tmux new
 
 # 3. Navigate to project
-p                           # cd ~/projects
+p                           # alias for: cd ~/projects
 cd my-project
 
 # 4. Start Claude Code
@@ -344,6 +351,26 @@ If you used an earlier version with `JETSON_*` variables:
 - `/mnt/nvme` paths continue to work if that's where your storage is mounted
 - All existing commands and workflows unchanged
 - Run `sudo ./setup.sh` to pick up new platform-aware improvements
+
+## Uninstall / Reset
+
+**Full reset:** Re-flash your SD card or NVMe. This removes everything.
+
+**Remove Arasul TUI only:**
+
+```bash
+pip uninstall arasul
+sudo rm -f /usr/local/bin/arasul
+rm -rf ~/.config/arasul
+```
+
+**Undo setup changes:** Re-run individual scripts with default Ubuntu settings, or restore the `.arasul-backup.*` files that each script creates before modifying system config.
+
+## Contributing & Community
+
+- [Contributing Guide](CONTRIBUTING.md) — how to submit PRs and report issues
+- [Security Policy](SECURITY.md) — how to report vulnerabilities
+- [Code of Conduct](CODE_OF_CONDUCT.md) — community standards
 
 ## License
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import os
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -40,7 +43,16 @@ def load_registry() -> dict[str, list[dict[str, Any]]]:
 
 def save_registry(registry: dict[str, list[dict[str, Any]]]) -> None:
     _ensure_registry()
-    REGISTRY_PATH.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    content = yaml.safe_dump(registry, sort_keys=False)
+    fd, tmp_path = tempfile.mkstemp(dir=str(REGISTRY_PATH.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp_path, str(REGISTRY_PATH))
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def _record_from_dict(item: dict[str, Any]) -> ProjectRecord:

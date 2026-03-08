@@ -9,6 +9,7 @@
 # =============================================================================
 
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -16,9 +17,10 @@ source "$(dirname "$0")/../lib/common.sh"
 # shellcheck source=../lib/detect.sh
 source "$(dirname "$0")/../lib/detect.sh"
 
+check_root
+
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
-REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-REAL_HOME="${REAL_HOME:-/home/${REAL_USER}}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 STORAGE_MOUNT="${STORAGE_MOUNT:-$(detect_storage_mount)}"
 VENV_DIR="${REAL_HOME}/venvs/arasul"
 BROWSER_CACHE="${STORAGE_MOUNT}/playwright-browsers"
@@ -58,9 +60,11 @@ install_system_deps() {
         libgbm1 \
         libpango-1.0-0 \
         libcairo2 \
-        libasound2 \
         libwayland-client0 \
         > /dev/null 2>&1
+    # libasound2 was renamed to libasound2t64 in newer Ubuntu/Debian
+    apt-get install -y -qq libasound2 > /dev/null 2>&1 || \
+        apt-get install -y -qq libasound2t64 > /dev/null 2>&1 || true
     log "System dependencies installed."
 }
 

@@ -34,7 +34,7 @@ console = Console(no_color=_os.environ.get("NO_COLOR") is not None)
 try:
     VERSION = f"v{pkg_version('arasul')}"
 except PackageNotFoundError:
-    VERSION = "v0.5.0"
+    VERSION = "dev"
 
 MAX_WIDTH = 84
 MIN_WIDTH = 50

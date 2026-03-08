@@ -5,7 +5,7 @@ description = "Interactive TUI for managing headless Linux SBC development serve
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
-authors = [{name = "Kolja Schoepe"}]
+authors = [{name = "Kolja Schoepe", email = "kolja@koljaschoepe.dev"}]
 keywords = ["jetson", "raspberry-pi", "sbc", "headless", "ssh", "development", "tui", "nvidia", "setup"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -42,6 +42,8 @@ dev = [
 Homepage = "https://github.com/koljaschoepe/OpenAra"
 Repository = "https://github.com/koljaschoepe/OpenAra"
 Issues = "https://github.com/koljaschoepe/OpenAra/issues"
+Documentation = "https://github.com/koljaschoepe/OpenAra#readme"
+Changelog = "https://github.com/koljaschoepe/OpenAra/blob/main/CHANGELOG.md"
 
 [project.scripts]
 arasul = "arasul_tui.app:run"

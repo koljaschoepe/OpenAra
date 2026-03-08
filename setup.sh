@@ -2,7 +2,7 @@
 # =============================================================================
 # Arasul — Automated Headless Dev Server Setup
 # =============================================================================
-# Usage: sudo ./setup.sh [--auto] [--skip-reboot] [--step N] [--interactive]
+# Usage: sudo ./setup.sh [--auto] [--skip-reboot] [--step N (1-10)] [--interactive]
 #
 # Supports: Jetson (all), Raspberry Pi (4/5), generic Linux (aarch64/x86_64)
 #
@@ -21,6 +21,9 @@ SKIP_REBOOT=false
 SKIP_SSH_HARDENING=false
 SINGLE_STEP=""
 AUTO=false
+
+# Sanitise user input: strip characters that could break sed or shell quoting
+_sanitise() { printf '%s' "$1" | tr -d '|"\\`$\n'; }
 
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -54,9 +57,6 @@ run_setup_wizard() {
         sd_only) info "Storage:  SD/eMMC only (root filesystem)" ;;
     esac
     echo ""
-
-    # Sanitise user input: strip characters that could break sed or shell quoting
-    _sanitise() { printf '%s' "$1" | tr -d '|"\\`$\n'; }
 
     # Question 1: Username
     local current_user="${SUDO_USER:-$(whoami)}"
@@ -166,7 +166,11 @@ load_config() {
 
     # Derived variables
     REAL_USER="$DEVICE_USER"
-    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+    REAL_HOME=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6)
+    if [[ -z "$REAL_HOME" ]]; then
+        err "Could not determine home directory for $REAL_USER"
+        exit 1
+    fi
 
     # Legacy variable names (kept for user .env backward compat only)
     JETSON_USER="$DEVICE_USER"
@@ -208,9 +212,6 @@ interactive_config() {
 
     cp "${SCRIPT_DIR}/.env.example" "$env_file"
     chmod 600 "$env_file"
-
-    # Sanitise user input: strip characters that could break sed or shell quoting
-    _sanitise() { printf '%s' "$1" | tr -d '|"\\`$\n'; }
 
     sed -i "s|CUSTOMER_NAME=\"CHANGEME\"|CUSTOMER_NAME=\"$(_sanitise "$i_customer")\"|" "$env_file"
     sed -i "s|DEVICE_USER=\"CHANGEME\"|DEVICE_USER=\"$(_sanitise "$i_user")\"|" "$env_file"
@@ -361,22 +362,23 @@ parse_args() {
                 echo "  --interactive    Interactive mode (generates .env + step selection)"
                 echo "  --auto           Run all applicable steps without wizard"
                 echo "  --skip-reboot    No reboot after setup"
-                echo "  --step N         Run only step N (1-9)"
+                echo "  --step N         Run only step N (1-10)"
                 echo "  -h, --help       Show this help"
                 echo ""
                 echo "Default behavior shows a step selection wizard."
                 echo "Use --auto for unattended / scripted installs."
                 echo ""
                 echo "Steps:"
-                echo "  1  System optimization (disable desktop, tune kernel)"
-                echo "  2  Network (hostname, mDNS, firewall)"
-                echo "  3  SSH hardening (key-only auth, fail2ban)"
-                echo "  4  Storage setup (NVMe/SSD, swap)"
-                echo "  5  Docker + Compose"
-                echo "  6  Dev tools (Node.js, Python, Claude Code)"
-                echo "  7  Quality of life (tmux, aliases, prompt)"
-                echo "  8  Headless browser (Playwright + Chromium)"
-                echo "  9  n8n workflow automation (Docker stack)"
+                echo "  1   System optimization (disable desktop, tune kernel)"
+                echo "  2   Network (hostname, mDNS, firewall)"
+                echo "  3   SSH hardening (key-only auth, fail2ban)"
+                echo "  4   Storage setup (NVMe/SSD, swap)"
+                echo "  5   Docker + Compose"
+                echo "  6   Dev tools (Node.js, Python, Claude Code)"
+                echo "  7   Quality of life (tmux, aliases, prompt)"
+                echo "  8   Headless browser (Playwright + Chromium)"
+                echo "  9   n8n workflow automation (Docker stack)"
+                echo "  10  Miniforge3 (conda package manager)"
                 exit 0
                 ;;
             *) err "Unknown option: $1"; exit 1 ;;
@@ -430,7 +432,7 @@ run_script() {
 # Step selection wizard
 # ---------------------------------------------------------------------------
 
-# Step descriptions (index 0-8 for steps 1-9)
+# Step descriptions (index 0-9 for steps 1-10)
 STEP_NAMES=(
     "System optimization (disable desktop, tune kernel)"
     "Network (hostname, mDNS, firewall)"
@@ -441,14 +443,15 @@ STEP_NAMES=(
     "Quality of life (tmux, aliases, prompt)"
     "Headless browser (Playwright + Chromium)"
     "n8n workflow automation"
+    "Miniforge3 (conda package manager)"
 )
 
-# Selected steps (1=selected, 0=not) — index 0-8 for steps 1-9
+# Selected steps (1=selected, 0=not) — index 0-9 for steps 1-10
 declare -a SELECTED_STEPS
 
 # Compute platform-aware default selections
 compute_step_defaults() {
-    SELECTED_STEPS=(1 1 1 1 1 1 1 1 0)
+    SELECTED_STEPS=(1 1 1 1 1 1 1 1 0 0)
 
     # Storage: off if no external storage detected
     if [[ -z "$STORAGE_DEVICE" ]]; then
@@ -488,7 +491,7 @@ try:
     with open("${state_file}") as f:
         data = json.load(f)
     steps = data.get("steps", {})
-    for i in range(1, 10):
+    for i in range(1, 11):
         v = steps.get(str(i))
         if v is not None:
             print(f"{i - 1}={'1' if v else '0'}")
@@ -532,7 +535,8 @@ data = {
         "6": $([ "${SELECTED_STEPS[5]}" = "1" ] && echo "True" || echo "False"),
         "7": $([ "${SELECTED_STEPS[6]}" = "1" ] && echo "True" || echo "False"),
         "8": $([ "${SELECTED_STEPS[7]}" = "1" ] && echo "True" || echo "False"),
-        "9": $([ "${SELECTED_STEPS[8]}" = "1" ] && echo "True" || echo "False")
+        "9": $([ "${SELECTED_STEPS[8]}" = "1" ] && echo "True" || echo "False"),
+        "10": $([ "${SELECTED_STEPS[9]}" = "1" ] && echo "True" || echo "False")
     }
 }
 with open("${state_file}", "w") as f:
@@ -547,7 +551,7 @@ select_steps_tui() {
     local tool="$1"
     local args=()
 
-    for i in $(seq 0 8); do
+    for i in $(seq 0 9); do
         local tag=$((i + 1))
         local status
         [[ "${SELECTED_STEPS[$i]}" == "1" ]] && status="ON" || status="OFF"
@@ -557,7 +561,7 @@ select_steps_tui() {
     local choices
     choices=$("$tool" --title "  Arasul — Step Selection  " \
         --checklist "Select setup steps (Space to toggle, Enter to confirm):" \
-        20 72 9 \
+        22 72 10 \
         "${args[@]}" \
         3>&1 1>&2 2>&3)
 
@@ -568,7 +572,7 @@ select_steps_tui() {
     fi
 
     # Reset all to 0, then enable selected
-    SELECTED_STEPS=(0 0 0 0 0 0 0 0 0)
+    SELECTED_STEPS=(0 0 0 0 0 0 0 0 0 0)
     # shellcheck disable=SC2086
     for s in $choices; do
         local num="${s//\"/}"
@@ -583,29 +587,29 @@ select_steps_text() {
     echo ""
 
     while true; do
-        for i in $(seq 0 8); do
+        for i in $(seq 0 9); do
             local tag=$((i + 1))
             local mark
             [[ "${SELECTED_STEPS[$i]}" == "1" ]] && mark="x" || mark=" "
-            printf "  [%s] %d. %s\n" "$mark" "$tag" "${STEP_NAMES[$i]}"
+            printf "  [%s] %2d. %s\n" "$mark" "$tag" "${STEP_NAMES[$i]}"
         done
         echo ""
-        read -rp "  Toggle (1-9), 'a' all, 'n' none, Enter to start: " choice
+        read -rp "  Toggle (1-10), 'a' all, 'n' none, Enter to start: " choice
 
         case "$choice" in
-            [1-9])
+            [1-9]|10)
                 local idx=$((choice - 1))
                 [[ "${SELECTED_STEPS[idx]}" == "1" ]] && SELECTED_STEPS[idx]=0 || SELECTED_STEPS[idx]=1
-                # Move cursor up to redraw (9 lines + 1 blank + 1 prompt = 11)
-                printf '\033[11A\033[0J'
+                # Move cursor up to redraw (10 lines + 1 blank + 1 prompt = 12)
+                printf '\033[12A\033[0J'
                 ;;
             a|A)
-                SELECTED_STEPS=(1 1 1 1 1 1 1 1 1)
-                printf '\033[11A\033[0J'
+                SELECTED_STEPS=(1 1 1 1 1 1 1 1 1 1)
+                printf '\033[12A\033[0J'
                 ;;
             n|N)
-                SELECTED_STEPS=(0 0 0 0 0 0 0 0 0)
-                printf '\033[11A\033[0J'
+                SELECTED_STEPS=(0 0 0 0 0 0 0 0 0 0)
+                printf '\033[12A\033[0J'
                 ;;
             "")
                 break
@@ -646,12 +650,12 @@ smart_step_selection() {
 
     echo "  The following will be configured:"
     echo ""
-    for i in $(seq 0 8); do
+    for i in $(seq 0 9); do
         local num=$((i + 1))
         if [[ "${SELECTED_STEPS[$i]}" == "1" ]]; then
-            printf "  ✓ Step %d: %s\n" "$num" "${STEP_NAMES[$i]}"
+            printf "  ✓ Step %2d: %s\n" "$num" "${STEP_NAMES[$i]}"
         else
-            printf "  ○ Step %d: %s\n" "$num" "${STEP_NAMES[$i]}"
+            printf "  ○ Step %2d: %s\n" "$num" "${STEP_NAMES[$i]}"
         fi
     done
 
@@ -679,21 +683,22 @@ run_step() {
     local step="$1"
 
     case "$step" in
-        1) run_script "01" "system-optimize" ;;
-        2) run_script "02" "network-setup" ;;
-        3) run_script "03" "ssh-harden" ;;
-        4) run_script "04" "storage-setup" ;;
-        5) run_script "05" "docker-setup" ;;
-        6) run_script "06" "devtools-setup" ;;
-        7) run_script "07" "quality-of-life" ;;
-        8) run_script "08" "browser-setup" ;;
-        9) run_script "09" "n8n-setup" ;;
+        1)  run_script "01" "system-optimize" ;;
+        2)  run_script "02" "network-setup" ;;
+        3)  run_script "03" "ssh-harden" ;;
+        4)  run_script "04" "storage-setup" ;;
+        5)  run_script "05" "docker-setup" ;;
+        6)  run_script "06" "devtools-setup" ;;
+        7)  run_script "07" "quality-of-life" ;;
+        8)  run_script "08" "browser-setup" ;;
+        9)  run_script "09" "n8n-setup" ;;
+        10) run_script "10" "miniforge-setup" ;;
     esac
 }
 
 # Run only the steps selected in SELECTED_STEPS[]
 run_selected_steps() {
-    for i in $(seq 0 8); do
+    for i in $(seq 0 9); do
         [[ "${SELECTED_STEPS[$i]}" == "0" ]] && continue
         run_step $((i + 1))
     done
@@ -723,8 +728,18 @@ run_all_steps() {
 parse_args "$@"
 check_root
 
+if [[ "$AUTO" == true ]] && [[ "$INTERACTIVE" == true ]]; then
+    err "--auto and --interactive are mutually exclusive"
+    exit 1
+fi
+
 if [[ "$INTERACTIVE" == true ]]; then
     interactive_config
+fi
+
+if [[ "$AUTO" == true ]] && [[ ! -f "${SCRIPT_DIR}/.env" ]]; then
+    err "Auto mode requires .env file. Create from .env.example first."
+    exit 1
 fi
 
 load_config
@@ -734,27 +749,35 @@ pre_flight_checks
 setup_logging
 
 echo ""
+_pad_line() {
+    local text="$1"
+    local box_w=63
+    local len=${#text}
+    local pad=$((box_w - len - 2))
+    (( pad < 0 )) && pad=0
+    printf "║ %s%*s║\n" "$text" "$pad" ""
+}
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║  Arasul — Headless Dev Server Setup                          ║"
 echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  Platform: ${PLATFORM} (${DEVICE_MODEL})"
-echo "║  Customer: ${CUSTOMER_NAME}"
-echo "║  User:     ${REAL_USER}"
-echo "║  Home:     ${REAL_HOME}"
-echo "║  Hostname: ${DEVICE_HOSTNAME}"
+_pad_line " Platform: ${PLATFORM} (${DEVICE_MODEL})"
+_pad_line " Customer: ${CUSTOMER_NAME}"
+_pad_line " User:     ${REAL_USER}"
+_pad_line " Home:     ${REAL_HOME}"
+_pad_line " Hostname: ${DEVICE_HOSTNAME}"
 if [[ -n "$STORAGE_DEVICE" ]]; then
-echo "║  Storage:  ${STORAGE_DEVICE} → ${STORAGE_MOUNT}"
+_pad_line " Storage:  ${STORAGE_DEVICE} → ${STORAGE_MOUNT}"
 else
-echo "║  Storage:  ${STORAGE_MOUNT} (no external device)"
+_pad_line " Storage:  ${STORAGE_MOUNT} (no external device)"
 fi
-echo "║  Swap:     ${SWAP_SIZE}"
+_pad_line " Swap:     ${SWAP_SIZE}"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
 
 if [[ -n "$SINGLE_STEP" ]]; then
     case "$SINGLE_STEP" in
-        [1-9]) run_step "$SINGLE_STEP" ;;
-        *) err "Invalid step: $SINGLE_STEP (must be 1-9)"; exit 1 ;;
+        [1-9]|10) run_step "$SINGLE_STEP" ;;
+        *) err "Invalid step: $SINGLE_STEP (must be 1-10)"; exit 1 ;;
     esac
 elif [[ "$AUTO" == true ]]; then
     run_all_steps
@@ -764,9 +787,9 @@ else
         smart_step_selection
         run_selected_steps
     else
-        # Non-interactive terminal (piped) — fall back to auto
-        warn "Non-interactive terminal detected — running all steps"
-        run_all_steps
+        # Non-interactive terminal (piped) — refuse to run silently
+        err "Non-interactive terminal detected. Use --auto for unattended setup."
+        exit 1
     fi
 fi
 
@@ -777,7 +800,7 @@ echo "╠═══════════════════════�
 echo "║  Next steps:                                                 ║"
 echo "║  1. Set up SSH config (see config/mac-ssh-config)            ║"
 echo "║  2. Reboot: sudo reboot                                     ║"
-echo "║  3. Connect: ssh ${DEVICE_HOSTNAME}"
+_pad_line " 3. Connect: ssh ${DEVICE_HOSTNAME}"
 echo "║  4. Work: t → claude                                        ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 

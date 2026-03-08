@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-python:
     name: Lint Python
@@ -25,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run ShellCheck
-        run: shellcheck -x --exclude=SC1091 scripts/*.sh setup.sh arasul_tui/install.sh lib/detect.sh
+        run: shellcheck -x --exclude=SC1091 scripts/*.sh setup.sh arasul_tui/install.sh lib/detect.sh lib/common.sh
 
   test:
     name: Test Python ${{ matrix.python-version }}
@@ -41,4 +45,10 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]"
-      - run: pytest tests/ -v --tb=short --cov=arasul_tui --cov-report=term-missing --cov-fail-under=65
+      - run: pytest tests/ -v --tb=short --cov=arasul_tui --cov-report=term-missing --cov-report=xml --cov-fail-under=65
+      - name: Upload coverage
+        if: matrix.python-version == '3.12' && github.ref == 'refs/heads/main'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false

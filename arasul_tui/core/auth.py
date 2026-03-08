@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import os
 import re
+import tempfile
 from pathlib import Path
 
 from arasul_tui.core.claude_json import load_claude_json, save_claude_json
@@ -65,8 +68,18 @@ def _upsert_shell_export(path: Path, export_line: str, mode: int) -> None:
             text += "\n"
         text += f"\n{export_line}\n"
 
-    path.write_text(text, encoding="utf-8")
-    path.chmod(mode)
+    # Atomic write: temp file + os.replace to prevent corruption on crash
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, str(path))
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def _write_token(token: str) -> None:

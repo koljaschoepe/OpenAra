@@ -5,6 +5,7 @@
 # journald limits, OOM protection, and automatic security updates.
 # =============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -12,6 +13,11 @@ source "$(dirname "$0")/../lib/common.sh"
 # shellcheck source=../lib/detect.sh
 source "$(dirname "$0")/../lib/detect.sh"
 
+check_root
+
+# Defaults for standalone execution
+REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 PLATFORM="${PLATFORM:-$(detect_platform)}"
 
 # ---------------------------------------------------------------------------
@@ -36,7 +42,6 @@ DISABLE_SERVICES=(
     "cups.service"
     "cups-browsed.service"
     "ModemManager.service"
-    "wpa_supplicant.service"
     "colord.service"
     "whoopsie.service"
     "apport.service"
@@ -48,11 +53,21 @@ if [[ "$PLATFORM" == "jetson" ]]; then
 fi
 
 for svc in "${DISABLE_SERVICES[@]}"; do
-    if systemctl is-enabled "$svc" &>/dev/null 2>&1; then
+    if systemctl is-enabled "$svc" &>/dev/null; then
         systemctl disable --now "$svc" 2>/dev/null || true
         log "Disabled: $svc"
     fi
 done
+
+# wpa_supplicant: only disable if connected via Ethernet (WiFi disable = brick)
+if systemctl is-enabled wpa_supplicant.service &>/dev/null; then
+    if ip route show default | grep -q "dev eth\|dev enp"; then
+        systemctl disable --now wpa_supplicant.service 2>/dev/null || true
+        log "Disabled: wpa_supplicant.service (Ethernet connection detected)"
+    else
+        log "Skipping wpa_supplicant disable (WiFi connection detected)"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Remove desktop packages (~3GB disk space)

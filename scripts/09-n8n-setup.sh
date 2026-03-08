@@ -4,6 +4,7 @@
 # Docker Compose stack: n8n + PostgreSQL on storage, Tailscale Funnel for webhooks
 # =============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -11,9 +12,11 @@ source "$(dirname "$0")/../lib/common.sh"
 # shellcheck source=../lib/detect.sh
 source "$(dirname "$0")/../lib/detect.sh"
 
+check_root
+
 # Defaults for standalone execution
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
-REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6 || echo "$HOME")}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 STORAGE_MOUNT="${STORAGE_MOUNT:-$(detect_storage_mount)}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 
@@ -29,7 +32,7 @@ if ! command -v docker &>/dev/null; then
     exit 1
 fi
 
-if ! docker compose version &>/dev/null 2>&1; then
+if ! docker compose version &>/dev/null; then
     err "Docker Compose V2 not available — run step 5 first"
     exit 1
 fi
@@ -55,7 +58,7 @@ if [[ ! -f "$N8N_ENV" ]]; then
 
     # Determine webhook URL
     N8N_WEBHOOK_URL="http://localhost:5678/"
-    if command -v tailscale &>/dev/null && tailscale status &>/dev/null 2>&1; then
+    if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
         TS_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//')
         if [[ -n "$TS_HOSTNAME" && "$TS_HOSTNAME" != "null" ]]; then
             N8N_WEBHOOK_URL="https://${TS_HOSTNAME}:5678/"
@@ -214,7 +217,7 @@ fi
 # ---------------------------------------------------------------------------
 # Tailscale serve & funnel (optional)
 # ---------------------------------------------------------------------------
-if command -v tailscale &>/dev/null && tailscale status &>/dev/null 2>&1; then
+if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
     # Serve n8n UI over Tailscale (VPN access)
     tailscale serve --bg 5678 2>/dev/null || true
     log "Tailscale serve: n8n accessible over VPN"

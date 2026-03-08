@@ -1,7 +1,7 @@
 # =============================================================================
-# Arasul Dev Server — SSH Configuration for Mac
+# Arasul Dev Server — SSH Configuration
 # =============================================================================
-# Copy the relevant sections to ~/.ssh/config on your Mac.
+# Copy the relevant sections to ~/.ssh/config on your workstation.
 #
 # Prerequisites:
 #   mkdir -p ~/.ssh/sockets
@@ -11,7 +11,7 @@
 # =============================================================================
 
 # --- Device via LAN (mDNS) ---
-Host jetson
+Host mydevice
     HostName HOSTNAME.local
     User USER
     IdentityFile ~/.ssh/id_ed25519
@@ -26,20 +26,20 @@ Host jetson
     # LocalForward 8080 localhost:8080
     # LocalForward 8888 localhost:8888
 
-# --- Device via USB-C Direct Connection ---
-Host jetson-usb
+# --- Device via USB-C Direct Connection (Jetson only) ---
+Host mydevice-usb
     HostName 192.168.55.1
     User USER
     IdentityFile ~/.ssh/id_ed25519
 
 # =============================================================================
 # Quick reference:
-#   ssh jetson      → LAN (fastest, home/office)
-#   ssh jetson-usb  → USB-C direct (no network needed)
+#   ssh mydevice      → LAN (fastest, home/office)
+#   ssh mydevice-usb  → USB-C direct (Jetson only, no network needed)
 #
 # Troubleshooting:
 #   If connection drops, clear stale sockets:
 #     rm -f ~/.ssh/sockets/*
 #   Connect without multiplexing:
-#     ssh -o ControlMaster=no -o ControlPath=none jetson
+#     ssh -o ControlMaster=no -o ControlPath=none mydevice
 # =============================================================================

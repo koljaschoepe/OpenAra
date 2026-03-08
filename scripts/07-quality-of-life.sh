@@ -4,6 +4,7 @@
 # tmux, shell aliases, power mode (Jetson), MOTD, bash prompt
 # =============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -13,7 +14,7 @@ source "$(dirname "$0")/../lib/detect.sh"
 
 PLATFORM="${PLATFORM:-$(detect_platform)}"
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
-REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6 || echo "$HOME")}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 STORAGE_MOUNT="${STORAGE_MOUNT:-$(detect_storage_mount)}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 
@@ -39,8 +40,11 @@ fi
 # tmux Plugin Manager
 TPM_DIR="${REAL_HOME}/.tmux/plugins/tpm"
 if [[ ! -d "$TPM_DIR" ]]; then
-    run_as_user "git clone https://github.com/tmux-plugins/tpm '${TPM_DIR}'" 2>/dev/null || true
-    log "tmux Plugin Manager installed (Ctrl-a I to install plugins)"
+    if run_as_user "git clone https://github.com/tmux-plugins/tpm '${TPM_DIR}'" 2>/dev/null; then
+        log "tmux Plugin Manager installed (Ctrl-a I to install plugins)"
+    else
+        warn "Failed to install TPM (GitHub may be unreachable)"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -145,7 +149,16 @@ fi
 # ---------------------------------------------------------------------------
 if [[ "${INSTALL_ARASUL_TUI:-true}" == "true" ]]; then
     if [[ -d "${SCRIPT_DIR}/arasul_tui" ]] && [[ -f "${SCRIPT_DIR}/pyproject.toml" ]]; then
+        # Install TUI as normal user (venv + pip install)
         run_as_user "bash '${SCRIPT_DIR}/arasul_tui/install.sh'" && log "Arasul TUI installed"
+
+        # Create launcher as root (install.sh's sudo tee may fail inside run_as_user)
+        cat > /usr/local/bin/arasul << 'LAUNCHER'
+#!/usr/bin/env bash
+exec "$HOME/venvs/arasul/bin/arasul" "$@"
+LAUNCHER
+        chmod +x /usr/local/bin/arasul
+        log "Launcher installed: /usr/local/bin/arasul"
     else
         warn "Arasul TUI sources not found in repo — skipping installation"
     fi

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,6 +124,6 @@ def run_setup_step(step: SetupStep) -> tuple[bool, str]:
     if not script_path.exists():
         return False, f"Script not found: {step.script}"
 
-    output = run_cmd(f"sudo bash {script_path}", timeout=300)
+    output = run_cmd(f"sudo bash {shlex.quote(str(script_path))}", timeout=300)
     done = step.check_done()
     return done, output

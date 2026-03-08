@@ -11,6 +11,7 @@ Only subcommand: /browser test
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 
 from arasul_tui.core.browser import (
@@ -107,12 +108,17 @@ def _smart_flow() -> CommandResult:
 
         mount = get_platform().storage.mount
         real_user = os.environ.get("USER") or os.environ.get("LOGNAME", "")
-        env_vars = f'STORAGE_MOUNT={mount} NVME_MOUNT={mount} REAL_USER={real_user} SCRIPT_DIR="{repo_root}"'
+        env_vars = (
+            f"STORAGE_MOUNT={shlex.quote(str(mount))}"
+            f" NVME_MOUNT={shlex.quote(str(mount))}"
+            f" REAL_USER={shlex.quote(real_user)}"
+            f" SCRIPT_DIR={shlex.quote(str(repo_root))}"
+        )
 
         console.print()
         try:
             ok, output = run_install_animated(
-                f"sudo {env_vars} bash {setup_script} 2>&1",
+                f"sudo {env_vars} bash {shlex.quote(str(setup_script))} 2>&1",
                 title="Browser Setup",
                 steps=_steps(),
                 check_milestone=_check_milestone,

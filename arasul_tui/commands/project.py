@@ -258,6 +258,9 @@ def cmd_create(state: TuiState, args: list[str]) -> CommandResult:
 
         def _create_template_finish(state: TuiState, user_input: str) -> CommandResult:
             tpl = state._wizard.pop("template_name", None)
+            if not tpl:
+                print_error("Template selection lost. Try again.")
+                return CommandResult(ok=False, style="silent")
             name = user_input.strip().replace(" ", "-")
             if not _is_safe_name(name):
                 print_error("Invalid project name.")

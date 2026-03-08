@@ -35,6 +35,13 @@ check_root() {
     fi
 }
 
+# Get real user's home directory (works under sudo)
+get_real_home() {
+    local home
+    home=$(getent passwd "${REAL_USER}" 2>/dev/null | cut -d: -f6)
+    echo "${home:-/home/${REAL_USER}}"
+}
+
 # Check internet connectivity
 check_internet() {
     if ! curl -s --connect-timeout 5 https://connectivity-check.ubuntu.com/ >/dev/null 2>&1; then
@@ -61,6 +68,13 @@ apt_install() {
 mkdir_as_user() {
     mkdir -p "$1"
     chown "${REAL_USER}:${REAL_USER}" "$1"
+}
+
+# Create a timestamped backup before overwriting a config file
+# Usage: backup_config /etc/ssh/sshd_config.d/99-arasul-hardened.conf
+backup_config() {
+    local file="$1"
+    [[ -f "$file" ]] && cp "$file" "${file}.arasul-backup.$(date +%Y%m%d-%H%M%S)"
 }
 
 # Append a line to a file if a pattern is not already present

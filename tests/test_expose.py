@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,11 +20,16 @@ def state(tmp_path: Path) -> TuiState:
     return s
 
 
-def test_expose_no_project():
+def test_expose_status_no_project():
+    """Status works even without an active project."""
     state = TuiState()
     state.active_project = None
-    result = cmd_expose(state, [])
-    assert result.ok is False
+    with (
+        patch("arasul_tui.commands.expose_cmd._is_tailscale_running", return_value=True),
+        patch("arasul_tui.commands.expose_cmd._get_funnel_status", return_value=[]),
+    ):
+        result = cmd_expose(state, [])
+    assert result.ok is True
 
 
 @patch("arasul_tui.commands.expose_cmd._is_tailscale_running", return_value=False)
@@ -65,3 +71,66 @@ def test_expose_defaults_to_status(state: TuiState):
     ):
         result = cmd_expose(state, [])
     assert result.ok is True
+
+
+# ---------------------------------------------------------------------------
+# on/off subcommand tests (10.3)
+# ---------------------------------------------------------------------------
+
+
+@patch("arasul_tui.commands.expose_cmd._is_tailscale_running", return_value=True)
+@patch("arasul_tui.commands.expose_cmd.spinner_run")
+def test_expose_on_success(mock_spinner, mock_ts, state: TuiState):
+    mock_spinner.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="https://device.ts.net", stderr=""
+    )
+    result = cmd_expose(state, ["on"])
+    assert result.ok is True
+    mock_spinner.assert_called_once()
+
+
+@patch("arasul_tui.commands.expose_cmd._is_tailscale_running", return_value=True)
+@patch("arasul_tui.commands.expose_cmd.spinner_run")
+def test_expose_on_custom_port(mock_spinner, mock_ts, state: TuiState):
+    mock_spinner.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    result = cmd_expose(state, ["on", "8080"])
+    assert result.ok is True
+
+
+@patch("arasul_tui.commands.expose_cmd._is_tailscale_running", return_value=True)
+@patch("arasul_tui.commands.expose_cmd.spinner_run")
+def test_expose_on_failure(mock_spinner, mock_ts, state: TuiState):
+    mock_spinner.return_value = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="permission denied"
+    )
+    result = cmd_expose(state, ["on"])
+    assert result.ok is False
+
+
+@patch("arasul_tui.commands.expose_cmd._is_tailscale_running", return_value=True)
+@patch("arasul_tui.commands.expose_cmd.spinner_run")
+def test_expose_on_timeout(mock_spinner, mock_ts, state: TuiState):
+    mock_spinner.side_effect = subprocess.TimeoutExpired(cmd="tailscale", timeout=30)
+    result = cmd_expose(state, ["on"])
+    assert result.ok is False
+
+
+@patch("arasul_tui.commands.expose_cmd.spinner_run")
+def test_expose_off_success(mock_spinner, state: TuiState):
+    mock_spinner.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    result = cmd_expose(state, ["off"])
+    assert result.ok is True
+
+
+@patch("arasul_tui.commands.expose_cmd.spinner_run")
+def test_expose_off_failure(mock_spinner, state: TuiState):
+    mock_spinner.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="error")
+    result = cmd_expose(state, ["off"])
+    assert result.ok is False
+
+
+@patch("arasul_tui.commands.expose_cmd.spinner_run")
+def test_expose_off_os_error(mock_spinner, state: TuiState):
+    mock_spinner.side_effect = OSError("tailscale not found")
+    result = cmd_expose(state, ["off"])
+    assert result.ok is False

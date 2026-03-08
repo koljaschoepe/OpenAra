@@ -302,6 +302,7 @@ def cmd_git(state: TuiState, args: list[str]) -> CommandResult:
             print_success("Already up to date.")
         elif "error" in output.lower() or "fatal" in output.lower():
             print_error(output[:200])
+            return CommandResult(ok=False, style="silent")
         else:
             print_success("Pulled latest changes.")
             if output:
@@ -313,6 +314,7 @@ def cmd_git(state: TuiState, args: list[str]) -> CommandResult:
         output = run_cmd(f"git -C {q} push 2>&1", timeout=30)
         if "error" in output.lower() or "fatal" in output.lower():
             print_error(output[:200])
+            return CommandResult(ok=False, style="silent")
         else:
             print_success("Pushed to remote.")
         return CommandResult(ok=True, style="silent")

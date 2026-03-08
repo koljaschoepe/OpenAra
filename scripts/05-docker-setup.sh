@@ -80,6 +80,12 @@ fi
 # ---------------------------------------------------------------------------
 DAEMON_JSON="/etc/docker/daemon.json"
 
+# Save checksum before config changes (to avoid unnecessary restarts)
+DAEMON_JSON_HASH_BEFORE=""
+if [[ -f "$DAEMON_JSON" ]]; then
+    DAEMON_JSON_HASH_BEFORE=$(md5sum "$DAEMON_JSON" 2>/dev/null | awk '{print $1}')
+fi
+
 # Determine data root: prefer external storage
 if [[ -d "$STORAGE_MOUNT" ]] && mountpoint -q "$STORAGE_MOUNT" 2>/dev/null; then
     DATA_ROOT="${STORAGE_MOUNT}/docker"
@@ -91,6 +97,7 @@ fi
 
 # Build desired config as a temp file, then merge with existing
 DESIRED_JSON=$(mktemp)
+trap 'rm -f "$DESIRED_JSON"' EXIT
 if has_nvidia_gpu 2>/dev/null; then
     cat > "$DESIRED_JSON" << EOF
 {
@@ -178,9 +185,9 @@ fi
 # ---------------------------------------------------------------------------
 # Docker Compose V2
 # ---------------------------------------------------------------------------
-if ! docker compose version &>/dev/null 2>&1; then
+if ! docker compose version &>/dev/null; then
     apt-get install -y -qq docker-compose-plugin 2>/dev/null || {
-        COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
+        COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
         COMPOSE_ARCH=$(uname -m)
         mkdir -p /usr/local/lib/docker/cli-plugins
         curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${COMPOSE_ARCH}" \
@@ -193,11 +200,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Restart Docker
+# Restart Docker (only if config changed — avoids killing running containers)
 # ---------------------------------------------------------------------------
 systemctl daemon-reload
 systemctl enable docker
-systemctl restart docker
+
+DAEMON_JSON_HASH_AFTER=""
+if [[ -f "$DAEMON_JSON" ]]; then
+    DAEMON_JSON_HASH_AFTER=$(md5sum "$DAEMON_JSON" 2>/dev/null | awk '{print $1}')
+fi
+
+if ! systemctl is-active docker &>/dev/null; then
+    systemctl start docker
+    log "Docker started"
+elif [[ "$DAEMON_JSON_HASH_BEFORE" != "$DAEMON_JSON_HASH_AFTER" ]]; then
+    systemctl restart docker
+    log "Docker restarted (config changed)"
+else
+    log "Docker config unchanged, skipping restart"
+fi
 
 # Verify NVIDIA runtime (only if GPU present)
 if has_nvidia_gpu 2>/dev/null; then

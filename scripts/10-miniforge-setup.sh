@@ -5,6 +5,7 @@
 # NOT called by setup.sh — only triggered on first template project creation.
 # =============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -12,15 +13,18 @@ source "$(dirname "$0")/../lib/common.sh"
 # shellcheck source=../lib/detect.sh
 source "$(dirname "$0")/../lib/detect.sh"
 
+check_root
+
 # Defaults for standalone execution
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 STORAGE_MOUNT="${STORAGE_MOUNT:-$(detect_storage_mount)}"
 
 MINIFORGE_DIR="${STORAGE_MOUNT}/miniforge3"
 ENVS_DIR="${STORAGE_MOUNT}/envs"
 ARCH="$(uname -m)"
 INSTALLER_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${ARCH}.sh"
-INSTALLER_PATH="/tmp/miniforge3-installer.sh"
+INSTALLER_PATH="$(mktemp /tmp/miniforge3-XXXXXX.sh)"
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks

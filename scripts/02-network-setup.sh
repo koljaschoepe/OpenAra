@@ -4,6 +4,7 @@
 # Hostname, mDNS (Bonjour), UFW firewall, optional Tailscale, optional static IP
 # =============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -14,9 +15,10 @@ source "$(dirname "$0")/../lib/detect.sh"
 # Defaults for standalone execution
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
-REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6 || echo "$HOME")}"
+REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 PLATFORM="${PLATFORM:-$(detect_platform)}"
 DEVICE_HOSTNAME="${DEVICE_HOSTNAME:-$(hostname)}"
+INSTALL_TAILSCALE="${INSTALL_TAILSCALE:-false}"
 
 # ---------------------------------------------------------------------------
 # Set hostname
@@ -83,7 +85,8 @@ fi
 # ---------------------------------------------------------------------------
 DEFAULT_IFACE=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
 DEFAULT_IFACE="${DEFAULT_IFACE:-eth0}"
-ETH_IP=$(ip -4 addr show "$DEFAULT_IFACE" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "not connected")
+ETH_IP=$(ip -4 addr show "$DEFAULT_IFACE" 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]; exit}')
+ETH_IP="${ETH_IP:-not connected}"
 log "Ethernet IP: ${ETH_IP}"
 log "mDNS: ${DEVICE_HOSTNAME}.local"
 
@@ -99,7 +102,7 @@ if [[ "${INSTALL_TAILSCALE}" == "true" ]]; then
         warn "Then disable key expiry in the Tailscale admin console"
     else
         skip "Tailscale already installed"
-        if tailscale status &>/dev/null 2>&1; then
+        if tailscale status &>/dev/null; then
             TS_IP=$(tailscale ip -4 2>/dev/null || echo "not connected")
             log "Tailscale IP: ${TS_IP}"
         else
@@ -114,8 +117,10 @@ fi
 # WiFi power save (RPi only — prevents SSH disconnects over WiFi)
 # ---------------------------------------------------------------------------
 if [[ "${PLATFORM:-}" == "raspberry_pi" ]]; then
-    if iw wlan0 get power_save 2>/dev/null | grep -q "on"; then
-        iw wlan0 set power_save off
+    # Detect WiFi interface dynamically (wlan0, wlp1s0, etc.)
+    WIFI_IFACE=$(iw dev 2>/dev/null | awk '/Interface/{print $2; exit}')
+    if [[ -n "${WIFI_IFACE:-}" ]] && iw "$WIFI_IFACE" get power_save 2>/dev/null | grep -q "on"; then
+        iw "$WIFI_IFACE" set power_save off
         log "WiFi power save disabled (prevents SSH drops)"
 
         # Persist via NetworkManager (Bookworm+)

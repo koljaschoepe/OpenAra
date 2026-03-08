@@ -96,7 +96,7 @@ detect_cuda_version() {
         python3 -c "import json; print(json.load(open('/usr/local/cuda/version.json'))['cuda']['version'])" 2>/dev/null && return
     fi
     if command -v nvcc &>/dev/null; then
-        nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' && return
+        nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' && return
     fi
     echo ""
 }

@@ -11,7 +11,6 @@ from arasul_tui.core.ui import (
     print_info,
     print_styled_panel,
     print_success,
-    print_warning,
     spinner_run,
 )
 
@@ -45,11 +44,7 @@ def _get_funnel_status() -> list[tuple[str, str]]:
 
 
 def cmd_expose(state: TuiState, args: list[str]) -> CommandResult:
-    """Manage Tailscale Funnel for the active project."""
-    if not state.active_project:
-        print_warning("No active project. Open one first.")
-        return CommandResult(ok=False, style="silent")
-
+    """Manage Tailscale Funnel (status works without active project)."""
     sub = args[0].lower() if args else "status"
 
     if sub == "status":
@@ -67,7 +62,7 @@ def cmd_expose(state: TuiState, args: list[str]) -> CommandResult:
         return CommandResult(ok=True, style="silent")
 
     elif sub == "on":
-        port = args[1] if len(args) > 1 else "80"
+        port = args[1] if len(args) > 1 else "3000"
         if not _is_tailscale_running():
             print_error("Tailscale is not running.")
             return CommandResult(ok=False, style="silent")
