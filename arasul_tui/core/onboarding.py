@@ -8,6 +8,7 @@ from rich import box
 from rich.padding import Padding
 from rich.panel import Panel
 
+from arasul_tui.core.config import get_display_name
 from arasul_tui.core.platform import get_platform
 from arasul_tui.core.types import CommandResult
 from arasul_tui.core.ui import (
@@ -38,26 +39,48 @@ def mark_onboarded() -> None:
 def show_welcome() -> CommandResult:
     """Show welcome screen with hardware info and start onboarding."""
     platform = get_platform()
+    known_name = get_display_name()
 
-    content = "\n".join(
-        [
-            "",
-            f"  Your [bold]{platform.display_name}[/bold] ({platform.ram_mb} MB RAM) is",
-            "  ready for development.",
-            "",
-            "  Let's get you set up:",
-            "",
-            "  [bold]Step 1/3:[/bold]  What's your name?",
-            "  [bold]Step 2/3:[/bold]  Set up Claude Code (AI pair programming)",
-            "  [bold]Step 3/3:[/bold]  Create your first project",
-            "",
-        ]
-    )
+    if known_name:
+        # Name already known — skip to step 2 (Claude Code)
+        steps = "\n".join(
+            [
+                "",
+                f"  Welcome back, [bold]{known_name}[/bold]!",
+                f"  Your [bold]{platform.display_name}[/bold] ({platform.ram_mb} MB RAM) is",
+                "  ready for development.",
+                "",
+                "  Let's finish setting up:",
+                "",
+                "  [bold]Step 1/2:[/bold]  Set up Claude Code (AI pair programming)",
+                "  [bold]Step 2/2:[/bold]  Create your first project",
+                "",
+            ]
+        )
+        prompt = "Press Enter to continue (or 'skip' to go to dashboard): "
+        handler = _onboarding_skip_to_claude
+    else:
+        steps = "\n".join(
+            [
+                "",
+                f"  Your [bold]{platform.display_name}[/bold] ({platform.ram_mb} MB RAM) is",
+                "  ready for development.",
+                "",
+                "  Let's get you set up:",
+                "",
+                "  [bold]Step 1/3:[/bold]  What's your name?",
+                "  [bold]Step 2/3:[/bold]  Set up Claude Code (AI pair programming)",
+                "  [bold]Step 3/3:[/bold]  Create your first project",
+                "",
+            ]
+        )
+        prompt = "Your first name (or 'skip'): "
+        handler = _onboarding_save_name
 
     w = _adaptive_width() - 4
     left_pad = _frame_left_pad() + 2
     panel = Panel(
-        content,
+        steps,
         title="[bold cyan]Welcome to Arasul![/bold cyan]",
         border_style="cyan",
         box=box.ROUNDED,
@@ -68,42 +91,35 @@ def show_welcome() -> CommandResult:
 
     return CommandResult(
         ok=True,
-        prompt="Press Enter to begin (or 'skip' to go to dashboard): ",
-        pending_handler=_onboarding_ask_name,
-        wizard_step=(1, 3, "Welcome"),
+        prompt=prompt,
+        pending_handler=handler,
+        wizard_step=(1, 3, "Welcome") if not known_name else (1, 2, "Welcome"),
         style="wizard",
     )
 
 
-def _onboarding_ask_name(state, raw):
-    """Step 1: Ask for the user's first name."""
+def _onboarding_skip_to_claude(state, raw):
+    """Resume onboarding when name is already known — go straight to Claude setup."""
     if raw.strip().lower() in ("skip", "s", "q"):
         mark_onboarded()
         return CommandResult(ok=True, refresh=True, style="silent")
 
-    print_info("")
-    print_info("First, what should I call you?")
-
-    return CommandResult(
-        ok=True,
-        prompt="Your first name: ",
-        pending_handler=_onboarding_save_name,
-        wizard_step=(1, 3, "Your Name"),
-        style="wizard",
-    )
+    return _show_step2_claude(state)
 
 
 def _onboarding_save_name(state, raw):
     """Save the user's name and proceed to Claude Code setup."""
     name = raw.strip()
-    if name and name.lower() not in ("skip", "s", "q"):
+    if name.lower() in ("skip", "s", "q"):
+        mark_onboarded()
+        return CommandResult(ok=True, refresh=True, style="silent")
+
+    if name:
         from arasul_tui.core.config import set_display_name
 
         set_display_name(name)
         state.display_name = name
         print_success(f"Nice to meet you, {name}!")
-    elif name.lower() in ("skip", "s"):
-        pass  # No name set, continue with setup
 
     return _show_step2_claude(state)
 
