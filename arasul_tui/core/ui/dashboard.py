@@ -348,14 +348,35 @@ def _build_full_dashboard(state: TuiState, content_w: int) -> list[str]:
         lines.append(f"  [{DIM}]No projects yet.[/{DIM}]")
         lines.append(f"  [{DIM}]Type 'new' to create one, or 'clone' to grab a repo.[/{DIM}]")
 
+    # --- Contextual hints ---
     lines.append("")
-    if projects:
-        lines.append(f"  [{DIM}]Open a project by name or number.[/{DIM}]")
-        lines.append(f"  [{DIM}]Try 'status', 'new', or 'help'.[/{DIM}]")
-    else:
-        lines.append(f"  [{DIM}]Type what you need — 'help' shows everything.[/{DIM}]")
+    hints = _build_hints(projects)
+    for hint in hints:
+        lines.append(f"  [{DIM}]{hint}[/{DIM}]")
 
     return lines
+
+
+def _build_hints(projects: list[str]) -> list[str]:
+    """Build 2-3 contextual hint lines based on current state."""
+    hints: list[str] = []
+
+    if not projects:
+        hints.append("Type 'new' to create a project, or 'clone' to grab a repo.")
+    else:
+        hints.append("Open a project by name or number.")
+
+    # Check Claude auth
+    from arasul_tui.core.auth import is_claude_configured
+
+    if not is_claude_configured():
+        hints.append("Run 'auth' to set up Claude Code.")
+    elif not projects:
+        pass  # already have a hint
+    else:
+        hints.append("Try 'status', 'new', or 'help'.")
+
+    return hints
 
 
 # ---------------------------------------------------------------------------

@@ -362,16 +362,18 @@ def run() -> None:
     print_header(state, full=True)
     state.first_run = False
 
-    # First-launch onboarding
+    # First-launch onboarding (minimal: just ask for name if unknown)
     from arasul_tui.core.onboarding import mark_onboarded, needs_onboarding, show_welcome
 
     _in_onboarding = False
     if needs_onboarding():
-        _in_onboarding = True
         result = show_welcome()
         if result.prompt and result.pending_handler:
+            _in_onboarding = True
             pending_handler = result.pending_handler
             wizard_step = result.wizard_step
+        elif result.refresh:
+            print_header(state, full=True)
 
     def _handle_result(result) -> None:
         nonlocal pending_handler, wizard_step, launch_request
