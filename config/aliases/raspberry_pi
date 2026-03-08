@@ -1,0 +1,6 @@
+# === arasul dev aliases (raspberry_pi) ===
+
+# System info
+alias vctemp='vcgencmd measure_temp'
+alias vcfreq='vcgencmd measure_clock arm'
+alias vcthrottle='vcgencmd get_throttled'

@@ -1,0 +1,6 @@
+# PyTorch — installed via NVIDIA Jetson wheels
+torch
+# API
+fastapi
+uvicorn[standard]
+python-multipart

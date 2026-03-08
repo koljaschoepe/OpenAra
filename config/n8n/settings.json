@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(docker *)",
+      "Bash(sudo *)",
+      "Bash(rm -rf *)",
+      "Bash(systemctl *)",
+      "Bash(kill *)",
+      "Edit(*/n8n/*)",
+      "Edit(/etc/*)",
+      "Read(*/n8n/.env)"
+    ]
+  }
+}

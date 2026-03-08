@@ -1,0 +1,5 @@
+# Reverse proxy for the inference API
+# Replace :80 with your domain for auto-HTTPS
+:80 {
+	reverse_proxy api:8000
+}

@@ -1,0 +1,7 @@
+# PyTorch — installed via NVIDIA Jetson wheels (not PyPI)
+# pip install torch torchvision torchaudio --extra-index-url https://developer.download.nvidia.com/compute/redist/jp/v61
+torch
+torchvision
+torchaudio
+numpy
+scipy
