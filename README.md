@@ -40,9 +40,14 @@ Arasul automates the boring parts of turning a Raspberry Pi or Jetson into a rem
 ### Install
 
 ```bash
-# On the device (via SSH):
+# One-liner (on the device via SSH):
+curl -fsSL https://raw.githubusercontent.com/koljaschoepe/OpenAra/main/install.sh | bash
+```
+
+Or manually:
+```bash
 git clone https://github.com/koljaschoepe/OpenAra.git
-cd arasul
+cd OpenAra
 sudo ./setup.sh
 ```
 

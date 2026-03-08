@@ -25,7 +25,7 @@ Thank you for your interest in contributing! This project helps people set up Li
 
 ```bash
 git clone https://github.com/koljaschoepe/OpenAra.git
-cd arasul
+cd OpenAra
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
