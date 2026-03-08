@@ -34,7 +34,7 @@ jobs:
       - name: Create tarball
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          tar -czf openara-${VERSION}.tar.gz \
+          tar -czf /tmp/openara-${VERSION}.tar.gz \
             --exclude='.git' \
             --exclude='tests' \
             --exclude='__pycache__' \
@@ -44,6 +44,7 @@ jobs:
             --exclude='.coverage' \
             --exclude='*.egg-info' \
             .
+          mv /tmp/openara-${VERSION}.tar.gz .
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
