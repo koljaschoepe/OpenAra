@@ -90,8 +90,7 @@ def _git_install_gh() -> tuple[bool, str]:
     apt_check = run_cmd("command -v apt-get", timeout=3)
     if not apt_check:
         return False, (
-            "GitHub CLI installation requires apt (Debian/Ubuntu). "
-            "Install manually: https://cli.github.com/"
+            "GitHub CLI installation requires apt (Debian/Ubuntu). Install manually: https://cli.github.com/"
         )
 
     def _do_install() -> str:

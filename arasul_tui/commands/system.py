@@ -87,7 +87,10 @@ def cmd_status(state: TuiState, _: list[str]) -> CommandResult:
         ("Host", socket.gethostname()),
         ("Uptime", uptime),
         ("RAM", f"{vm.used // (1024 * 1024)}M / {vm.total // (1024 * 1024)}M ({vm.percent:.0f}%)"),
-        (storage_label, f"{disk.used // (1024**3)}G / {disk.total // (1024**3)}G ({disk.percent:.0f}%)" if disk else "n/a"),
+        (
+            storage_label,
+            f"{disk.used // (1024**3)}G / {disk.total // (1024**3)}G ({disk.percent:.0f}%)" if disk else "n/a",
+        ),
         ("Temp", temp_str),
     ]
 
