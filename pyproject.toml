@@ -3,7 +3,7 @@ name = "arasul"
 version = "0.5.0"
 description = "Interactive TUI for managing headless Linux SBC development servers (Jetson, Raspberry Pi, generic)"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "BUSL-1.1"}
 requires-python = ">=3.10"
 authors = [{name = "Kolja Schoepe", email = "kolja@koljaschoepe.dev"}]
 keywords = ["jetson", "raspberry-pi", "sbc", "headless", "ssh", "development", "tui", "nvidia", "setup"]
@@ -11,7 +11,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

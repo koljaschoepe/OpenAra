@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/koljaschoepe/OpenAra/actions/workflows/ci.yml/badge.svg)](https://github.com/koljaschoepe/OpenAra/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/koljaschoepe/OpenAra/graph/badge.svg)](https://codecov.io/gh/koljaschoepe/OpenAra)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 One command turns a Raspberry Pi or Jetson into a secure, always-on dev server.<br>An interactive TUI lets you create projects, launch Claude Code, and manage everything from your terminal.
@@ -303,4 +303,6 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-[MIT](LICENSE)
+[Business Source License 1.1](LICENSE) — free for personal, internal, and non-commercial use. Converts to Apache 2.0 on 2030-03-09.
+
+For commercial licensing, contact [kolja@koljaschoepe.dev](mailto:kolja@koljaschoepe.dev).
