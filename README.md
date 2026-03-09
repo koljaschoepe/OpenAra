@@ -41,7 +41,7 @@ Hardware is auto-detected — OpenAra adapts to your platform automatically.
 
 ## Quick Start
 
-**Prerequisites:** Raspberry Pi 4/5 or NVIDIA Jetson with a fresh OS, network connection, and an [SSH key](docs/ssh-setup.md) on your workstation.
+**Prerequisites:** Raspberry Pi 4/5 or NVIDIA Jetson with a fresh OS, network connection, and an [SSH key](docs/ssh-setup.md) on your workstation. New to this? See the [Hardware Setup Guide](docs/hardware-setup.md) for flashing your OS and installing storage.
 
 ```bash
 # On the device (via SSH):
@@ -69,6 +69,7 @@ The setup wizard detects your hardware, asks 3 questions, shows an installation 
   ✓ Step 7: Quality of life (tmux, aliases, MOTD)
   ○ Step 8: Headless browser (Playwright)
   ○ Step 9: n8n workflow automation
+  ○ Step 10: Miniforge3 (conda package manager)
 
   Proceed? [Y/n/customize]:
 ```
@@ -122,9 +123,9 @@ arasul          # launch (or alias: atui)
 | **Git** | `/git` (setup wizard), `/git pull`, `/git push`, `/git log`, `/git status` |
 | **System** | `/status`, `/health`, `/setup`, `/docker` |
 | **Security** | `/keys`, `/logins`, `/security` |
-| **Browser** | `/browser status\|test\|install\|mcp` |
+| **Browser** | `/browser` (smart flow: status → install → test → MCP) |
 | **MCP** | `/mcp list\|add\|test\|remove` |
-| **Services** | `/n8n` (install/start/api-key/mcp), `/n8n stop` |
+| **Services** | `/n8n` (smart flow: install → start → API key → MCP), `/n8n stop` |
 | **Network** | `/tailscale status\|install\|up\|down`, `/expose on\|off\|status` |
 | **Meta** | `/help`, `/exit`, `/welcome` |
 
@@ -145,13 +146,14 @@ Create projects with pre-configured conda environments:
 ## Daily Workflow
 
 ```bash
-ssh mydevice                    # Connect from anywhere
-t                               # Resume your tmux session
-p && cd my-project              # Switch to a project
-claude                          # Start Claude Code with full project context
+ssh mydevice                    # Connect — TUI starts automatically
+3                               # Select project by number
+c                               # Launch Claude Code in that project
 ```
 
-That's it. Your server is always on, your projects persist, and Claude Code picks up right where you left off.
+That's it. The Arasul TUI starts on every SSH login, shows your projects, and launches Claude Code in the right directory. Your server is always on, your projects persist, and Claude picks up right where you left off.
+
+> **Tip:** For persistent sessions that survive SSH disconnects, use `t` after exiting the TUI to start a tmux session.
 
 ## Setup Options
 
@@ -228,7 +230,8 @@ Only `CUSTOMER_NAME` and `DEVICE_USER` are required — everything else is auto-
 │   ├── 06-devtools-setup.sh
 │   ├── 07-quality-of-life.sh
 │   ├── 08-browser-setup.sh
-│   └── 09-n8n-setup.sh
+│   ├── 09-n8n-setup.sh
+│   └── 10-miniforge-setup.sh
 ├── config/                     # tmux, aliases, MOTD, SSH template
 └── .github/workflows/          # CI, CodeQL, Release automation
 ```
