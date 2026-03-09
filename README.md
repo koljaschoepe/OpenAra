@@ -18,7 +18,7 @@ One command turns a Raspberry Pi or Jetson into a secure, always-on dev server.<
 <br>
 
 <p align="center">
-  <img src="docs/arasul-tui.svg" alt="Arasul TUI" width="720">
+  <img src="docs/arasul-tui.png" alt="Arasul TUI" width="720">
 </p>
 
 ## Why OpenAra?
