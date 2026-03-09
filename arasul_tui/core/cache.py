@@ -61,7 +61,9 @@ def cached_cmd(cmd: str, timeout: int = 4, ttl: float | None = None) -> str:
         return cached
 
     result = run_cmd(cmd, timeout=timeout)
-    _cache.set(cmd, result, ttl=ttl)
+    # Don't cache transient errors — let the next call retry
+    if not result.startswith("Error:"):
+        _cache.set(cmd, result, ttl=ttl)
     return result
 
 
@@ -99,7 +101,8 @@ def parallel_cmds(cmds: dict[str, tuple[str, int]]) -> dict[str, str]:
             except (OSError, TimeoutError) as exc:
                 result = f"Error: {exc}"
             results[key] = result
-            _cache.set(cmd, result)
+            if not result.startswith("Error:"):
+                _cache.set(cmd, result)
 
     return results
 

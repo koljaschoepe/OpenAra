@@ -49,7 +49,10 @@ def cmd_status(state: TuiState, _: list[str]) -> CommandResult:
 
     vm = psutil.virtual_memory()
     storage_path = str(platform.storage.mount)
-    disk = psutil.disk_usage(storage_path if Path(storage_path).exists() else "/")
+    try:
+        disk = psutil.disk_usage(storage_path if Path(storage_path).exists() else "/")
+    except OSError:
+        disk = None
     uptime_s = int(dt.datetime.now().timestamp() - psutil.boot_time())
     hours, rem = divmod(uptime_s, 3600)
     mins = rem // 60
@@ -71,7 +74,10 @@ def cmd_status(state: TuiState, _: list[str]) -> CommandResult:
 
     docker = str(docker_running_count())
     root = state.project_root
-    project_count = len([p for p in root.iterdir() if p.is_dir()]) if root.exists() else 0
+    try:
+        project_count = len([p for p in root.iterdir() if p.is_dir()]) if root.exists() else 0
+    except OSError:
+        project_count = 0
     project_name = state.active_project.name if state.active_project else "[dim]-[/dim]"
 
     # Storage label based on type
@@ -81,7 +87,7 @@ def cmd_status(state: TuiState, _: list[str]) -> CommandResult:
         ("Host", socket.gethostname()),
         ("Uptime", uptime),
         ("RAM", f"{vm.used // (1024 * 1024)}M / {vm.total // (1024 * 1024)}M ({vm.percent:.0f}%)"),
-        (storage_label, f"{disk.used // (1024**3)}G / {disk.total // (1024**3)}G ({disk.percent:.0f}%)"),
+        (storage_label, f"{disk.used // (1024**3)}G / {disk.total // (1024**3)}G ({disk.percent:.0f}%)" if disk else "n/a"),
         ("Temp", temp_str),
     ]
 
@@ -161,8 +167,11 @@ def cmd_health(state: TuiState, _: list[str]) -> CommandResult:
         else:
             rows.append(("NVMe Health", "n/a"))
     elif platform.storage.is_external:
-        disk = psutil.disk_usage(str(platform.storage.mount))
-        rows.append(("Storage", f"{disk.percent:.0f}% used"))
+        try:
+            disk = psutil.disk_usage(str(platform.storage.mount))
+            rows.append(("Storage", f"{disk.percent:.0f}% used"))
+        except OSError:
+            rows.append(("Storage", "n/a"))
 
     # Temperature
     temp = run_cmd("cat /sys/devices/virtual/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf \"%.0f\", $1/1000}'")

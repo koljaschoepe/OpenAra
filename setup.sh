@@ -23,7 +23,7 @@ SINGLE_STEP=""
 AUTO=false
 
 # Sanitise user input: strip characters that could break sed or shell quoting
-_sanitise() { printf '%s' "$1" | tr -d '|"\\`$\n'; }
+_sanitise() { printf '%s' "$1" | tr -d '|"'\''\\`$&\n'; }
 
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -83,24 +83,28 @@ run_setup_wizard() {
         warn "Existing .env backed up"
     fi
 
+    if [[ ! -f "${SCRIPT_DIR}/.env.example" ]]; then
+        err ".env.example not found in ${SCRIPT_DIR} — is the repo complete?"
+        exit 1
+    fi
     cp "${SCRIPT_DIR}/.env.example" "$env_file"
     chmod 600 "$env_file"
 
-    sed -i "s|CUSTOMER_NAME=\"CHANGEME\"|CUSTOMER_NAME=\"$(_sanitise "$customer_name")\"|" "$env_file"
+    sed -i "s|CUSTOMER_NAME=\"arasul\"|CUSTOMER_NAME=\"$(_sanitise "$customer_name")\"|" "$env_file"
     sed -i "s|DEVICE_USER=\"CHANGEME\"|DEVICE_USER=\"$(_sanitise "$device_user")\"|" "$env_file"
     sed -i "s|DEVICE_HOSTNAME=\"dev\"|DEVICE_HOSTNAME=\"$(_sanitise "$device_hostname")\"|" "$env_file"
 
-    # Fill in auto-detected storage
+    # Fill in auto-detected storage (sanitise device paths for sed safety)
     if [[ -n "$storage_dev" ]]; then
-        sed -i "s|STORAGE_DEVICE=\"\"|STORAGE_DEVICE=\"${storage_dev}\"|" "$env_file"
-        sed -i "s|STORAGE_MOUNT=\"\"|STORAGE_MOUNT=\"${storage_mount}\"|" "$env_file"
+        sed -i "s|STORAGE_DEVICE=\"\"|STORAGE_DEVICE=\"$(_sanitise "$storage_dev")\"|" "$env_file"
+        sed -i "s|STORAGE_MOUNT=\"\"|STORAGE_MOUNT=\"$(_sanitise "$storage_mount")\"|" "$env_file"
     fi
 
     # Sensible swap default for low-RAM devices
     if [[ "$ram_mb" != "unknown" ]] && (( ram_mb <= 4096 )); then
-        sed -i "s|SWAP_SIZE=\"32G\"|SWAP_SIZE=\"2G\"|" "$env_file"
+        sed -i "s|SWAP_SIZE=\"8G\"|SWAP_SIZE=\"2G\"|" "$env_file"
     elif [[ "$ram_mb" != "unknown" ]] && (( ram_mb <= 8192 )); then
-        sed -i "s|SWAP_SIZE=\"32G\"|SWAP_SIZE=\"16G\"|" "$env_file"
+        sed -i "s|SWAP_SIZE=\"8G\"|SWAP_SIZE=\"4G\"|" "$env_file"
     fi
 
     log "Configuration saved to .env"
@@ -118,10 +122,36 @@ load_config() {
         run_setup_wizard
     fi
 
+    if [[ ! -f "$env_file" ]]; then
+        err "Setup wizard did not create .env — cannot continue"
+        exit 1
+    fi
+
+    # Validate .env contains only safe assignments (KEY="VALUE" or KEY=VALUE)
+    # Reject lines with command substitution, pipes, or semicolons
+    # Skip comment lines (they may contain pipes in documentation)
+    if grep -vE '^\s*#' "$env_file" | grep -qE '(\$\(|`|;|\|)' 2>/dev/null; then
+        err ".env contains potentially unsafe content (command substitution or pipes)"
+        err "Please check your .env file for malicious entries"
+        exit 1
+    fi
+
     # shellcheck source=/dev/null
     source "$env_file"
 
     # Backward compatibility: map old variable names to new ones
+    if [[ -n "${JETSON_USER:-}" && -z "${DEVICE_USER:-}" ]]; then
+        warn "JETSON_USER is deprecated — please rename to DEVICE_USER in .env"
+    fi
+    if [[ -n "${JETSON_HOSTNAME:-}" && -z "${DEVICE_HOSTNAME:-}" ]]; then
+        warn "JETSON_HOSTNAME is deprecated — please rename to DEVICE_HOSTNAME in .env"
+    fi
+    if [[ -n "${NVME_DEVICE:-}" && -z "${STORAGE_DEVICE:-}" ]]; then
+        warn "NVME_DEVICE is deprecated — please rename to STORAGE_DEVICE in .env"
+    fi
+    if [[ -n "${NVME_MOUNT:-}" && -z "${STORAGE_MOUNT:-}" ]]; then
+        warn "NVME_MOUNT is deprecated — please rename to STORAGE_MOUNT in .env"
+    fi
     DEVICE_USER="${DEVICE_USER:-${JETSON_USER:-}}"
     DEVICE_HOSTNAME="${DEVICE_HOSTNAME:-${JETSON_HOSTNAME:-}}"
     STORAGE_DEVICE="${STORAGE_DEVICE:-${NVME_DEVICE:-}}"
@@ -129,12 +159,16 @@ load_config() {
 
     # Validate required fields
     local missing=false
-    for var in CUSTOMER_NAME DEVICE_USER DEVICE_HOSTNAME; do
+    for var in DEVICE_USER DEVICE_HOSTNAME; do
         if [[ "${!var:-}" == "CHANGEME" ]] || [[ -z "${!var:-}" ]]; then
             err "Variable $var is not configured in .env"
             missing=true
         fi
     done
+    if [[ -z "${CUSTOMER_NAME:-}" ]] || [[ "${CUSTOMER_NAME:-}" == "CHANGEME" ]]; then
+        err "Variable CUSTOMER_NAME is not configured in .env"
+        missing=true
+    fi
 
     if [[ "$missing" == true ]]; then
         err "Please edit .env or delete it and re-run to start the wizard"
@@ -151,24 +185,47 @@ load_config() {
     STORAGE_TYPE=$(detect_storage_type)
 
     # Set defaults
-    SWAP_SIZE="${SWAP_SIZE:-32G}"
+    SWAP_SIZE="${SWAP_SIZE:-8G}"
     INSTALL_TAILSCALE="${INSTALL_TAILSCALE:-false}"
     NODE_VERSION="${NODE_VERSION:-22}"
     INSTALL_CLAUDE="${INSTALL_CLAUDE:-true}"
     INSTALL_OLLAMA="${INSTALL_OLLAMA:-false}"
     INSTALL_ARASUL_TUI="${INSTALL_ARASUL_TUI:-true}"
     INSTALL_N8N="${INSTALL_N8N:-false}"
+    INSTALL_MINIFORGE="${INSTALL_MINIFORGE:-false}"
     POWER_MODE="${POWER_MODE:-3}"
     DOCKER_LOG_MAX_SIZE="${DOCKER_LOG_MAX_SIZE:-10m}"
     DOCKER_LOG_MAX_FILES="${DOCKER_LOG_MAX_FILES:-3}"
     GIT_USER_NAME="${GIT_USER_NAME:-}"
     GIT_USER_EMAIL="${GIT_USER_EMAIL:-}"
+    STATIC_IP="${STATIC_IP:-}"
+    STATIC_GATEWAY="${STATIC_GATEWAY:-}"
+    STATIC_DNS="${STATIC_DNS:-}"
+
+    # Validate IP format if set
+    if [[ -n "$STATIC_IP" ]]; then
+        local ip_part="${STATIC_IP%%/*}"
+        if ! [[ "$ip_part" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            err "Invalid STATIC_IP format: ${STATIC_IP} (expected e.g. 192.168.1.100/24)"
+            exit 1
+        fi
+    fi
+    if [[ -n "$STATIC_GATEWAY" ]]; then
+        if ! [[ "$STATIC_GATEWAY" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            err "Invalid STATIC_GATEWAY format: ${STATIC_GATEWAY} (expected e.g. 192.168.1.1)"
+            exit 1
+        fi
+    fi
 
     # Derived variables
     REAL_USER="$DEVICE_USER"
     REAL_HOME=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6)
     if [[ -z "$REAL_HOME" ]]; then
         err "Could not determine home directory for $REAL_USER"
+        exit 1
+    fi
+    if [[ ! -d "$REAL_HOME" ]]; then
+        err "Home directory does not exist: $REAL_HOME"
         exit 1
     fi
 
@@ -193,8 +250,8 @@ interactive_config() {
     read -rp "Device username: " i_user
     read -rp "Hostname [dev]: " i_hostname
     i_hostname="${i_hostname:-dev}"
-    read -rp "Swap size [32G]: " i_swap
-    i_swap="${i_swap:-32G}"
+    read -rp "Swap size [8G]: " i_swap
+    i_swap="${i_swap:-8G}"
     read -rp "Install Tailscale? (true/false) [false]: " i_tailscale
     i_tailscale="${i_tailscale:-false}"
     read -rp "Git name: " i_git_name
@@ -210,18 +267,31 @@ interactive_config() {
         warn "Existing .env backed up"
     fi
 
+    if [[ ! -f "${SCRIPT_DIR}/.env.example" ]]; then
+        err ".env.example not found in ${SCRIPT_DIR} — is the repo complete?"
+        exit 1
+    fi
     cp "${SCRIPT_DIR}/.env.example" "$env_file"
     chmod 600 "$env_file"
 
-    sed -i "s|CUSTOMER_NAME=\"CHANGEME\"|CUSTOMER_NAME=\"$(_sanitise "$i_customer")\"|" "$env_file"
+    sed -i "s|CUSTOMER_NAME=\"arasul\"|CUSTOMER_NAME=\"$(_sanitise "$i_customer")\"|" "$env_file"
     sed -i "s|DEVICE_USER=\"CHANGEME\"|DEVICE_USER=\"$(_sanitise "$i_user")\"|" "$env_file"
     sed -i "s|DEVICE_HOSTNAME=\"dev\"|DEVICE_HOSTNAME=\"$(_sanitise "$i_hostname")\"|" "$env_file"
-    sed -i "s|SWAP_SIZE=\"32G\"|SWAP_SIZE=\"$(_sanitise "$i_swap")\"|" "$env_file"
+    sed -i "s|SWAP_SIZE=\"8G\"|SWAP_SIZE=\"$(_sanitise "$i_swap")\"|" "$env_file"
     sed -i "s|INSTALL_TAILSCALE=\"false\"|INSTALL_TAILSCALE=\"$(_sanitise "$i_tailscale")\"|" "$env_file"
     sed -i "s|GIT_USER_NAME=\"\"|GIT_USER_NAME=\"$(_sanitise "$i_git_name")\"|" "$env_file"
     sed -i "s|GIT_USER_EMAIL=\"\"|GIT_USER_EMAIL=\"$(_sanitise "$i_git_email")\"|" "$env_file"
     sed -i "s|INSTALL_CLAUDE=\"true\"|INSTALL_CLAUDE=\"$(_sanitise "$i_claude")\"|" "$env_file"
     sed -i "s|INSTALL_ARASUL_TUI=\"true\"|INSTALL_ARASUL_TUI=\"$(_sanitise "$i_tui")\"|" "$env_file"
+
+    # Fill in auto-detected storage
+    local storage_dev storage_mount
+    storage_dev=$(detect_storage_device)
+    storage_mount=$(detect_storage_mount)
+    if [[ -n "$storage_dev" ]]; then
+        sed -i "s|STORAGE_DEVICE=\"\"|STORAGE_DEVICE=\"$(_sanitise "$storage_dev")\"|" "$env_file"
+        sed -i "s|STORAGE_MOUNT=\"\"|STORAGE_MOUNT=\"$(_sanitise "$storage_mount")\"|" "$env_file"
+    fi
 
     log ".env file created: ${env_file}"
     echo ""
@@ -231,7 +301,10 @@ interactive_config() {
 # Pre-flight checks
 # ---------------------------------------------------------------------------
 check_platform() {
-    PLATFORM="${PLATFORM:-$(detect_platform)}"
+    # Use := to also trigger detection when PLATFORM is set but empty
+    if [[ -z "${PLATFORM:-}" ]]; then
+        PLATFORM=$(detect_platform)
+    fi
     DEVICE_MODEL=$(detect_model)
 
     case "$PLATFORM" in
@@ -275,12 +348,13 @@ pre_flight_checks() {
     # Check 1: SSH authorized_keys
     local auth_keys="${REAL_HOME}/.ssh/authorized_keys"
     if [[ ! -f "$auth_keys" ]] || [[ ! -s "$auth_keys" ]]; then
-        warn "No SSH key found for ${REAL_USER}!"
+        warn "╔══════════════════════════════════════════════════════╗"
+        warn "║  WARNING: No SSH key found for ${REAL_USER}!"
+        warn "║  Setup will disable password login — you WILL be    ║"
+        warn "║  locked out if you don't copy your SSH key first!   ║"
+        warn "╚══════════════════════════════════════════════════════╝"
         echo ""
-        echo "  SSH keys are required for secure remote access."
-        echo "  After setup, password login will be disabled."
-        echo ""
-        echo "  On your Mac, run these commands:"
+        echo "  On your workstation, run these commands:"
         echo ""
         echo "    # Generate SSH key (if you don't have one):"
         echo "    ssh-keygen -t ed25519"
@@ -290,10 +364,14 @@ pre_flight_checks() {
         echo ""
         echo "  Then run setup.sh again."
         echo ""
-        read -rp "  Continue without SSH key? (SSH hardening will be skipped) [y/N]: " skip_ssh
-        if [[ "${skip_ssh,,}" != "y" && "${skip_ssh,,}" != "yes" ]]; then
-            info "Setup cancelled. Copy your SSH key first, then try again."
-            exit 0
+        if [[ "$AUTO" == true ]]; then
+            warn "No SSH key — skipping SSH hardening in auto mode"
+        else
+            read -rp "  Continue without SSH key? (SSH hardening will be skipped) [y/N]: " skip_ssh
+            if [[ "${skip_ssh,,}" != "y" && "${skip_ssh,,}" != "yes" ]]; then
+                info "Setup cancelled. Copy your SSH key first, then try again."
+                exit 0
+            fi
         fi
         SKIP_SSH_HARDENING=true
         warnings=$((warnings + 1))
@@ -305,10 +383,14 @@ pre_flight_checks() {
 
     # Check 2: Internet connectivity
     if ! check_internet; then
-        echo "  Some steps require internet (Docker images, npm packages)."
-        read -rp "  Continue anyway? [y/N]: " continue_offline
-        if [[ "${continue_offline,,}" != "y" ]]; then
-            exit 0
+        if [[ "$AUTO" == true ]]; then
+            warn "No internet — some steps may fail in auto mode"
+        else
+            echo "  Some steps require internet (Docker images, npm packages)."
+            read -rp "  Continue anyway? [y/N]: " continue_offline
+            if [[ "${continue_offline,,}" != "y" ]]; then
+                exit 0
+            fi
         fi
         warnings=$((warnings + 1))
     else
@@ -406,11 +488,11 @@ run_script() {
     export STORAGE_DEVICE STORAGE_MOUNT STORAGE_TYPE
     export DEVICE_USER DEVICE_HOSTNAME CUSTOMER_NAME
     export INSTALL_TAILSCALE INSTALL_CLAUDE INSTALL_OLLAMA
-    export INSTALL_ARASUL_TUI INSTALL_N8N
+    export INSTALL_ARASUL_TUI INSTALL_N8N INSTALL_MINIFORGE
     export NODE_VERSION POWER_MODE
     export GIT_USER_NAME GIT_USER_EMAIL
     export DOCKER_LOG_MAX_SIZE DOCKER_LOG_MAX_FILES
-    export STATIC_IP STATIC_GATEWAY
+    export STATIC_IP STATIC_GATEWAY STATIC_DNS
     export SKIP_SSH_HARDENING
     export SCRIPT_DIR
 
@@ -467,14 +549,12 @@ compute_step_defaults() {
         fi
     fi
 
-    # Generic: storage off if no external drive
-    if [[ "$PLATFORM" == "generic" ]] && [[ -z "$STORAGE_DEVICE" ]]; then
-        SELECTED_STEPS[3]=0
-    fi
-
-    # n8n: follow .env config
+    # n8n/Miniforge: follow .env config
     if [[ "${INSTALL_N8N}" == "true" ]]; then
         SELECTED_STEPS[8]=1
+    fi
+    if [[ "${INSTALL_MINIFORGE}" == "true" ]]; then
+        SELECTED_STEPS[9]=1
     fi
 }
 
@@ -485,10 +565,10 @@ load_setup_state() {
     command -v python3 &>/dev/null || return 0
 
     local saved
-    saved=$(python3 << PYEOF
-import json
+    saved=$(python3 - "$state_file" << 'PYEOF'
+import json, sys
 try:
-    with open("${state_file}") as f:
+    with open(sys.argv[1]) as f:
         data = json.load(f)
     steps = data.get("steps", {})
     for i in range(1, 11):
@@ -519,28 +599,36 @@ save_setup_state() {
 
     local state_file="${state_dir}/setup-state.json"
 
-    python3 << PYEOF
-import json
+    # Build step values as a safe comma-separated string
+    local step_vals=""
+    for i in $(seq 0 9); do
+        [[ -n "$step_vals" ]] && step_vals+=","
+        [[ "${SELECTED_STEPS[$i]}" == "1" ]] && step_vals+="1" || step_vals+="0"
+    done
+
+    python3 - "$state_file" "$PLATFORM" "$step_vals" << 'PYEOF'
+import json, os, sys, tempfile
 from datetime import datetime
+state_file, platform, step_csv = sys.argv[1], sys.argv[2], sys.argv[3]
+vals = step_csv.split(",")
 data = {
     "version": 1,
     "timestamp": datetime.now().isoformat(),
-    "platform": "${PLATFORM}",
-    "steps": {
-        "1": $([ "${SELECTED_STEPS[0]}" = "1" ] && echo "True" || echo "False"),
-        "2": $([ "${SELECTED_STEPS[1]}" = "1" ] && echo "True" || echo "False"),
-        "3": $([ "${SELECTED_STEPS[2]}" = "1" ] && echo "True" || echo "False"),
-        "4": $([ "${SELECTED_STEPS[3]}" = "1" ] && echo "True" || echo "False"),
-        "5": $([ "${SELECTED_STEPS[4]}" = "1" ] && echo "True" || echo "False"),
-        "6": $([ "${SELECTED_STEPS[5]}" = "1" ] && echo "True" || echo "False"),
-        "7": $([ "${SELECTED_STEPS[6]}" = "1" ] && echo "True" || echo "False"),
-        "8": $([ "${SELECTED_STEPS[7]}" = "1" ] && echo "True" || echo "False"),
-        "9": $([ "${SELECTED_STEPS[8]}" = "1" ] && echo "True" || echo "False"),
-        "10": $([ "${SELECTED_STEPS[9]}" = "1" ] && echo "True" || echo "False")
-    }
+    "platform": platform,
+    "steps": {str(i + 1): v == "1" for i, v in enumerate(vals)},
 }
-with open("${state_file}", "w") as f:
-    json.dump(data, f, indent=2)
+dir_path = os.path.dirname(state_file)
+fd, tmp = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, state_file)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
 PYEOF
 
     chown "$REAL_USER:$REAL_USER" "$state_file" 2>/dev/null || true
@@ -704,22 +792,24 @@ run_selected_steps() {
     done
 }
 
-# Run all applicable steps (--auto mode, old default behavior)
+# Run all applicable steps (--auto mode, uses platform-aware defaults)
 run_all_steps() {
-    run_step 1
-    run_step 2
-    run_step 3
-    run_step 4
-    run_step 5
-    run_step 6
-    run_step 7
-    run_step 8
+    compute_step_defaults
 
-    if [[ "${INSTALL_N8N}" == "true" ]]; then
-        run_step 9
-    else
-        log "n8n skipped (INSTALL_N8N=false)"
+    # SSH: disable if no key found in pre-flight
+    if [[ "${SKIP_SSH_HARDENING}" == "true" ]]; then
+        SELECTED_STEPS[2]=0
     fi
+
+    # n8n/Miniforge: follow .env config
+    if [[ "${INSTALL_N8N}" == "true" ]]; then
+        SELECTED_STEPS[8]=1
+    fi
+    if [[ "${INSTALL_MINIFORGE}" == "true" ]]; then
+        SELECTED_STEPS[9]=1
+    fi
+
+    run_selected_steps
 }
 
 # ---------------------------------------------------------------------------
@@ -745,8 +835,8 @@ fi
 load_config
 check_platform
 check_user_exists
-pre_flight_checks
 setup_logging
+pre_flight_checks
 
 echo ""
 _pad_line() {
@@ -797,11 +887,12 @@ echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║  Setup complete!                                             ║"
 echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  Next steps:                                                 ║"
-echo "║  1. Set up SSH config (see config/mac-ssh-config)            ║"
-echo "║  2. Reboot: sudo reboot                                     ║"
-_pad_line " 3. Connect: ssh ${DEVICE_HOSTNAME}"
-echo "║  4. Work: t → claude                                        ║"
+echo "║  Next steps (from your workstation):                         ║"
+echo "║  1. Set up SSH config (see docs/ssh-setup.md)               ║"
+echo "║  2. Reboot the device: sudo reboot                          ║"
+_pad_line " 3. Connect: ssh ${DEVICE_USER}@${DEVICE_HOSTNAME}.local"
+echo "║  4. The Arasul TUI starts automatically on SSH login        ║"
+echo "║  5. For persistent sessions: tmux attach || tmux new -s dev ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 
 if [[ "$SKIP_REBOOT" == false ]]; then

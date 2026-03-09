@@ -86,6 +86,14 @@ def _git_install_gh() -> tuple[bool, str]:
         ver = run_cmd("gh --version | head -1", timeout=3)
         return True, ver or "installed"
 
+    # Verify apt is available (Arasul targets Debian/Ubuntu)
+    apt_check = run_cmd("command -v apt-get", timeout=3)
+    if not apt_check:
+        return False, (
+            "GitHub CLI installation requires apt (Debian/Ubuntu). "
+            "Install manually: https://cli.github.com/"
+        )
+
     def _do_install() -> str:
         install_cmd = (
             "sudo mkdir -p -m 755 /etc/apt/keyrings && "

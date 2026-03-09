@@ -41,6 +41,8 @@ def build_install_panel(
     lines: list[str] = [""]
 
     total = len(steps)
+    if total == 0:
+        return Padding("", (0, 0, 0, 0))
     completed = sum(step_states)
 
     for i, (label, detail) in enumerate(steps):

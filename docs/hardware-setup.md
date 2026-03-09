@@ -260,7 +260,7 @@ Done — close the serial console, disconnect USB-C. The Jetson is now fully con
 2. **Set up SSH alias** (see [SSH key setup guide](ssh-setup.md) for full config):
    ```
    # Add to ~/.ssh/config:
-   Host jetson
+   Host dev
        HostName <hostname>.local
        User <your-user>
        IdentityFile ~/.ssh/id_ed25519
@@ -268,7 +268,7 @@ Done — close the serial console, disconnect USB-C. The Jetson is now fully con
 
 3. **Connect:**
    ```bash
-   ssh jetson    # TUI starts automatically
+   ssh dev    # TUI starts automatically
    ```
 
 </details>
@@ -357,6 +357,33 @@ sudo ./setup.sh
 
 OpenAra auto-detects the best available storage (NVMe > USB-SSD > SD card).
 
+---
+
+### Step 5: Copy Your SSH Key
+
+> **Important:** OpenAra disables password login during setup. Copy your key **before** rebooting.
+
+```bash
+# From your workstation:
+ssh-copy-id -i ~/.ssh/id_ed25519.pub your-user@dev.local
+```
+
+If you don't have an SSH key yet, see the [SSH key setup guide](ssh-setup.md).
+
+After reboot, set up an SSH alias for easy access:
+
+```
+# Add to ~/.ssh/config on your workstation:
+Host dev
+    HostName dev.local
+    User your-user
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+```bash
+ssh dev    # TUI starts automatically
+```
+
 </details>
 
 ---
@@ -395,15 +422,15 @@ OpenAra auto-detects the best available storage (NVMe > USB-SSD > SD card).
 
 ## After Setup
 
-Once `setup.sh` completes and the device reboots:
+Once `setup.sh` completes and the device reboots, connect using the SSH alias you set up (e.g. `dev`):
 
 ```bash
-ssh mydevice                    # TUI starts automatically
+ssh dev                         # TUI starts automatically
 3                               # Select project by number
 c                               # Launch Claude Code
 ```
 
-See the [SSH key setup guide](ssh-setup.md) for configuring key-based authentication from your workstation.
+> **No SSH alias?** Connect with `ssh <user>@<hostname>.local` and see the [SSH key setup guide](ssh-setup.md) for full config.
 
 ## Storage Recommendations
 
@@ -415,6 +442,8 @@ See the [SSH key setup guide](ssh-setup.md) for configuring key-based authentica
 | **Generic** | NVMe / SSD | USB 3.0 SSD | Local disk |
 
 OpenAra auto-detects storage: **NVMe > USB-SSD > SD/local disk**. Projects, Docker data, swap, and conda environments go on the fastest available.
+
+**Next step:** Return to the [Quick Start](../README.md#quick-start) to run `setup.sh`.
 
 ---
 

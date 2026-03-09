@@ -15,6 +15,8 @@ REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
 REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 DEVICE_HOSTNAME="${DEVICE_HOSTNAME:-$(hostname)}"
 
+check_root
+
 # ---------------------------------------------------------------------------
 # Safety check: SSH keys present?
 # ---------------------------------------------------------------------------
@@ -35,7 +37,18 @@ if [[ ! -f "$AUTH_KEYS" ]] || [[ ! -s "$AUTH_KEYS" ]]; then
     exit 2
 fi
 
-KEY_COUNT=$(wc -l < "$AUTH_KEYS")
+# Count actual key lines (skip blanks and comments)
+KEY_COUNT=$(grep -cE '^(ssh-|ecdsa-|sk-ssh-|sk-ecdsa-)' "$AUTH_KEYS" 2>/dev/null || echo 0)
+if [[ "$KEY_COUNT" -eq 0 ]]; then
+    err "authorized_keys exists but contains no valid SSH keys!"
+    err "File has only comments or blank lines."
+    err ""
+    err "Copy your SSH key first:"
+    err "  ssh-copy-id ${REAL_USER}@${DEVICE_HOSTNAME}.local"
+    err ""
+    err "SSH hardening skipped to prevent lockout"
+    exit 2
+fi
 log "${KEY_COUNT} SSH key(s) found in authorized_keys"
 
 # ---------------------------------------------------------------------------
@@ -50,11 +63,15 @@ if [[ -f "$SSHD_LEGACY" ]] && [[ ! -f "$SSHD_DROPIN" ]]; then
     log "Renamed SSH config: 99-jetson-hardened.conf → 99-arasul-hardened.conf"
 fi
 
-if [[ ! -f "$SSHD_DROPIN" ]]; then
+SSHD_CONFIG_VERSION="2"  # Bump to force regeneration on upgrades
+
+if [[ ! -f "$SSHD_DROPIN" ]] || ! grep -q "# version=$SSHD_CONFIG_VERSION" "$SSHD_DROPIN" 2>/dev/null; then
     backup_config /etc/ssh/sshd_config
+    [[ -f "$SSHD_DROPIN" ]] && backup_config "$SSHD_DROPIN"
     # Build SSH hardening config dynamically for portability
     {
         echo "# Arasul — SSH Hardening"
+        echo "# version=$SSHD_CONFIG_VERSION"
         echo "PermitRootLogin no"
         echo "PasswordAuthentication no"
         # KbdInteractiveAuthentication replaces ChallengeResponseAuthentication in OpenSSH 8.7+
@@ -74,10 +91,10 @@ if [[ ! -f "$SSHD_DROPIN" ]]; then
         echo "AllowTcpForwarding local"
         echo "PrintLastLog yes"
         echo ""
-        echo "# Strong crypto only"
-        echo "Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com"
-        echo "MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com"
-        echo "KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512"
+        echo "# Strong crypto (with broader fallbacks for older clients)"
+        echo "Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr"
+        echo "MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
+        echo "KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group14-sha256"
         echo "HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256"
     } > "$SSHD_DROPIN"
 
@@ -105,7 +122,9 @@ if ! dpkg -l fail2ban 2>/dev/null | grep -q "^ii"; then
 bantime  = 3600
 findtime = 600
 maxretry = 3
-ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+# Only localhost is ignored — all other IPs (including LAN) can be banned.
+# To whitelist your LAN, add e.g. 192.168.1.0/24 (use the narrowest range possible).
+ignoreip = 127.0.0.1/8 ::1
 
 [sshd]
 enabled  = true

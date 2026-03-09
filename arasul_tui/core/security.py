@@ -90,16 +90,21 @@ def security_audit() -> list[AuditItem]:
     sshd_conf = Path("/etc/ssh/sshd_config.d/99-arasul-hardened.conf")
     if not sshd_conf.exists():
         sshd_conf = Path("/etc/ssh/sshd_config.d/99-jetson-hardened.conf")
-    if sshd_conf.exists():
-        content = sshd_conf.read_text(encoding="utf-8", errors="replace")
+    try:
+        content = sshd_conf.read_text(encoding="utf-8", errors="replace") if sshd_conf.exists() else ""
+    except OSError:
+        content = ""
+    if content:
         if "PasswordAuthentication no" in content:
             items.append(AuditItem("SSH key-only auth", "Password login disabled", "ok"))
         else:
             items.append(AuditItem("SSH key-only auth", "Password login may be enabled", "warn"))
     else:
         passwd_auth = run_cmd("sshd -T 2>/dev/null | grep -i '^passwordauthentication'", timeout=3)
-        if passwd_auth and "passwordauthentication no" in passwd_auth.lower():
+        if passwd_auth and not passwd_auth.startswith("Error") and "passwordauthentication no" in passwd_auth.lower():
             items.append(AuditItem("SSH key-only auth", "Password login disabled", "ok"))
+        elif not passwd_auth or passwd_auth.startswith("Error"):
+            items.append(AuditItem("SSH key-only auth", "Cannot check (sshd -T failed)", "warn"))
         else:
             items.append(AuditItem("SSH key-only auth", "Password login enabled", "fail"))
 
@@ -118,7 +123,7 @@ def security_audit() -> list[AuditItem]:
     # UFW firewall
     if can_sudo:
         ufw = run_cmd("sudo ufw status 2>/dev/null | head -1", timeout=5)
-        if "active" in ufw.lower():
+        if "status: active" in ufw.lower():
             rules = run_cmd("sudo ufw status 2>/dev/null | grep -c ALLOW", timeout=5)
             items.append(AuditItem("UFW firewall", f"{rules} rules active" if rules.isdigit() else "Active", "ok"))
         else:
@@ -128,12 +133,15 @@ def security_audit() -> list[AuditItem]:
 
     # Root login
     root_check = run_cmd("sshd -T 2>/dev/null | grep -i permitrootlogin", timeout=3)
-    if "no" in root_check.lower():
-        items.append(AuditItem("Root login disabled", "PermitRootLogin no", "ok"))
-    elif "without-password" in root_check.lower() or "prohibit-password" in root_check.lower():
-        items.append(AuditItem("Root login restricted", "Key-only root access", "warn"))
+    if root_check and not root_check.startswith("Error"):
+        if "no" in root_check.lower():
+            items.append(AuditItem("Root login disabled", "PermitRootLogin no", "ok"))
+        elif "without-password" in root_check.lower() or "prohibit-password" in root_check.lower():
+            items.append(AuditItem("Root login restricted", "Key-only root access", "warn"))
+        else:
+            items.append(AuditItem("Root login", "May be enabled", "fail"))
     else:
-        items.append(AuditItem("Root login", "May be enabled", "fail"))
+        items.append(AuditItem("Root login", "Cannot check (sshd -T failed)", "warn"))
 
     # SSH TCP forwarding
     tcp_fwd = run_cmd("sshd -T 2>/dev/null | grep -i allowtcpforwarding", timeout=3)
@@ -147,20 +155,26 @@ def security_audit() -> list[AuditItem]:
     # SSH directory and authorized_keys permissions
     ssh_dir = Path.home() / ".ssh"
     if ssh_dir.exists():
-        ssh_mode = oct(ssh_dir.stat().st_mode)[-3:]
+        try:
+            ssh_mode = oct(ssh_dir.stat().st_mode)[-3:]
+        except OSError:
+            ssh_mode = None
         if ssh_mode == "700":
             items.append(AuditItem("~/.ssh permissions", "700", "ok"))
-        else:
+        elif ssh_mode:
             items.append(AuditItem("~/.ssh permissions", f"{ssh_mode} (should be 700)", "warn"))
 
         auth_keys = ssh_dir / "authorized_keys"
         if auth_keys.exists():
-            ak_mode = oct(auth_keys.stat().st_mode)[-3:]
+            try:
+                ak_mode = oct(auth_keys.stat().st_mode)[-3:]
+            except OSError:
+                ak_mode = None
             if ak_mode == "600":
                 items.append(AuditItem("authorized_keys perms", ak_mode, "ok"))
             elif ak_mode == "644":
                 items.append(AuditItem("authorized_keys perms", f"{ak_mode} (should be 600)", "warn"))
-            else:
+            elif ak_mode:
                 items.append(AuditItem("authorized_keys perms", f"{ak_mode} (should be 600)", "fail"))
 
     # SSH key algorithm

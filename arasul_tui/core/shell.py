@@ -20,7 +20,11 @@ def run_cmd(cmd: str, timeout: int = 4) -> str:
             text=True,
             timeout=timeout,
         )
-        return (proc.stdout or proc.stderr or "").strip()
+        stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+        if proc.returncode != 0 and not stdout:
+            return f"Error: {stderr}" if stderr else "Error: command failed"
+        return stdout or stderr or ""
     except subprocess.TimeoutExpired:
         return "Error: command timed out"
     except OSError as exc:

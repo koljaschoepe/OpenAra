@@ -35,16 +35,16 @@ def test_browsers_path_external_storage(tmp_path: Path):
         assert _browsers_path() == cache
 
 
-def test_browsers_path_fallback(tmp_path: Path):
+def test_browsers_path_uses_storage_even_if_nonexistent(tmp_path: Path):
+    """_browsers_path should return the storage cache path even if it doesn't
+    exist yet (the install step will create it)."""
     nonexistent = tmp_path / "nonexistent"
-    fallback = tmp_path / "fallback-cache"
     with (
         patch.dict(os.environ, {}, clear=True),
         patch("arasul_tui.core.browser._storage_browser_cache", return_value=nonexistent),
-        patch("arasul_tui.core.browser.FALLBACK_BROWSER_CACHE", fallback),
     ):
         os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
-        assert _browsers_path() == fallback
+        assert _browsers_path() == nonexistent
 
 
 def test_is_mcp_configured_no_file(tmp_path: Path):

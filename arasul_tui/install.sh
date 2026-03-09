@@ -6,7 +6,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Resolve actual user when run via sudo
 REAL_USER="${SUDO_USER:-$(whoami)}"
-REAL_HOME=$(eval echo "~${REAL_USER}")
+REAL_HOME=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6)
+REAL_HOME="${REAL_HOME:-/home/${REAL_USER}}"
 VENV_DIR="${REAL_HOME}/venvs/arasul"
 
 # Validate Python version (3.10+ required)
@@ -59,8 +60,8 @@ else
   echo "[arasul] Playwright not installed — skipping Chromium download"
 fi
 
-# Detect shell RC file
-if [[ "${SHELL}" == *"zsh"* ]]; then
+# Detect shell RC file (check file existence, not just $SHELL which may be wrong under sudo)
+if [[ -f "${REAL_HOME}/.zshrc" ]] && [[ "${SHELL}" == *"zsh"* ]]; then
   RC_FILE="${REAL_HOME}/.zshrc"
 else
   RC_FILE="${REAL_HOME}/.bashrc"

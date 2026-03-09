@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import getpass
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+
+def _safe_username() -> str:
+    try:
+        return getpass.getuser()
+    except (KeyError, ImportError):
+        return os.environ.get("USER", "user")
 
 
 def default_project_root() -> Path:
@@ -26,7 +34,7 @@ class Screen(Enum):
 
 @dataclass
 class TuiState:
-    user: str = field(default_factory=getpass.getuser)
+    user: str = field(default_factory=_safe_username)
     display_name: str = field(default_factory=_default_display_name)
     active_project: Path | None = None
     project_root: Path = field(default_factory=default_project_root)

@@ -16,8 +16,10 @@ def test_cache_expiry():
     c = ShellCache(default_ttl=0.05)
     c.set("key", "value")
     assert c.get("key") == "value"
-    time.sleep(0.1)
-    assert c.get("key") is None
+    # Use mock to avoid flaky timing on slow CI runners
+    future = time.monotonic() + 1.0
+    with patch("arasul_tui.core.cache.time.monotonic", return_value=future):
+        assert c.get("key") is None
 
 
 def test_cache_invalidate():

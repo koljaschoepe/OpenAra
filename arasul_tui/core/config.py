@@ -14,8 +14,8 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 def _load() -> dict:
     try:
-        return json.loads(CONFIG_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError):
         return {}
 
 

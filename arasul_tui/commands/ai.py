@@ -137,7 +137,10 @@ def _wizard_step_account_info(state: TuiState, user_input: str) -> CommandResult
             pending_handler=_wizard_step_account_info,
             wizard_step=(2, 2, "Account"),
         )
-    if len(uuid) < 8 or "-" not in uuid:
+    import re as _re
+
+    _UUID_RE = _re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.IGNORECASE)
+    if not _UUID_RE.match(uuid):
         print_error("Invalid UUID format.")
         print_info("Expected: [dim]xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx[/dim]")
         return CommandResult(

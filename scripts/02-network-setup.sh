@@ -18,6 +18,8 @@ REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
 REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 PLATFORM="${PLATFORM:-$(detect_platform)}"
 DEVICE_HOSTNAME="${DEVICE_HOSTNAME:-$(hostname)}"
+
+check_root
 INSTALL_TAILSCALE="${INSTALL_TAILSCALE:-false}"
 
 # ---------------------------------------------------------------------------
@@ -51,7 +53,7 @@ if ! command -v ufw &>/dev/null; then
     apt-get install -y -qq ufw
 fi
 
-if ! ufw status | grep -q "active"; then
+if ! ufw status | grep -q "Status: active"; then
     ufw default deny incoming
     ufw default allow outgoing
     ufw limit ssh comment 'SSH rate-limited'
@@ -66,17 +68,41 @@ fi
 # Static IP (optional)
 # ---------------------------------------------------------------------------
 if [[ -n "${STATIC_IP:-}" ]]; then
-    local_connection=$(nmcli -t -f NAME,TYPE connection show --active | grep ethernet | head -1 | cut -d: -f1)
-    if [[ -n "$local_connection" ]]; then
-        nmcli connection modify "$local_connection" \
-            ipv4.method manual \
-            ipv4.addresses "$STATIC_IP" \
-            ipv4.gateway "${STATIC_GATEWAY:-}" \
-            ipv4.dns "8.8.8.8,1.1.1.1"
-        nmcli connection up "$local_connection"
-        log "Static IP configured: ${STATIC_IP}"
+    if ! command -v nmcli &>/dev/null; then
+        warn "NetworkManager (nmcli) not found — skipping static IP configuration"
+        if [[ "${PLATFORM:-}" == "raspberry_pi" ]]; then
+            warn "Configure static IP via /etc/dhcpcd.conf or nmcli (if NetworkManager is installed)"
+        else
+            warn "Configure static IP manually via /etc/netplan/ or /etc/network/interfaces"
+        fi
     else
-        warn "No active Ethernet connection found for static IP"
+        local_connection=$(nmcli -t -f NAME,TYPE connection show --active | grep ethernet | head -1 | cut -d: -f1)
+        if [[ -n "$local_connection" ]]; then
+            nmcli connection modify "$local_connection" \
+                ipv4.method manual \
+                ipv4.addresses "$STATIC_IP"
+            if [[ -n "${STATIC_GATEWAY:-}" ]]; then
+                nmcli connection modify "$local_connection" \
+                    ipv4.gateway "${STATIC_GATEWAY}"
+            fi
+            if [[ -n "${STATIC_DNS:-}" ]]; then
+                nmcli connection modify "$local_connection" \
+                    ipv4.dns "${STATIC_DNS}"
+            else
+                nmcli connection modify "$local_connection" \
+                    ipv4.dns "8.8.8.8,1.1.1.1"
+            fi
+            warn "Applying static IP — SSH session may disconnect briefly..."
+            # Run in background to avoid breaking the current SSH session.
+            # The connection restart will drop the session; nohup ensures the
+            # config change persists even if the shell exits.
+            nohup nmcli connection up "$local_connection" >/dev/null 2>&1 &
+            sleep 2
+            log "Static IP configured: ${STATIC_IP}"
+            warn "If SSH disconnected, reconnect using the new IP: ${STATIC_IP}"
+        else
+            warn "No active Ethernet connection found for static IP"
+        fi
     fi
 fi
 
@@ -84,6 +110,10 @@ fi
 # Network info
 # ---------------------------------------------------------------------------
 DEFAULT_IFACE=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
+if [[ -z "$DEFAULT_IFACE" ]]; then
+    # Fallback: first UP interface (handles enp0s*, eno*, wlan*, etc.)
+    DEFAULT_IFACE=$(ip -4 link show 2>/dev/null | awk -F': ' '/state UP/{print $2; exit}')
+fi
 DEFAULT_IFACE="${DEFAULT_IFACE:-eth0}"
 ETH_IP=$(ip -4 addr show "$DEFAULT_IFACE" 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]; exit}')
 ETH_IP="${ETH_IP:-not connected}"
@@ -97,6 +127,10 @@ if [[ "${INSTALL_TAILSCALE}" == "true" ]]; then
     if ! command -v tailscale &>/dev/null; then
         log "Installing Tailscale..."
         curl -fsSL https://tailscale.com/install.sh | sh
+        if ! command -v tailscale &>/dev/null; then
+            err "Tailscale installation failed — command not found"
+            exit 1
+        fi
         log "Tailscale installed"
         warn "Authentication required: sudo tailscale up"
         warn "Then disable key expiry in the Tailscale admin console"
@@ -117,6 +151,10 @@ fi
 # WiFi power save (RPi only — prevents SSH disconnects over WiFi)
 # ---------------------------------------------------------------------------
 if [[ "${PLATFORM:-}" == "raspberry_pi" ]]; then
+    # Ensure iw is available (not always installed on RPi OS Lite)
+    if ! command -v iw &>/dev/null; then
+        apt-get install -y -qq iw 2>/dev/null || true
+    fi
     # Detect WiFi interface dynamically (wlan0, wlp1s0, etc.)
     WIFI_IFACE=$(iw dev 2>/dev/null | awk '/Interface/{print $2; exit}')
     if [[ -n "${WIFI_IFACE:-}" ]] && iw "$WIFI_IFACE" get power_save 2>/dev/null | grep -q "on"; then

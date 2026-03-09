@@ -453,22 +453,25 @@ def _delete_confirm(state: TuiState, user_input: str) -> CommandResult:
             wizard_step=(2, 2, "Confirm"),
         )
 
-    try:
-        shutil.rmtree(target)
-    except OSError as exc:
-        print_error(f"Deletion failed: {exc}")
-        return CommandResult(ok=False, style="silent")
-
-    # Clean up conda environment if it exists (only after successful rmtree)
-    remove_conda_env(target.name)
-
-    # Clean up wizard state
-    state._wizard.pop("delete_target", None)
+    # Unregister first so the registry stays consistent even if
+    # disk cleanup is interrupted (avoids ghost entries).
+    unregister_project(target.name)
 
     if state.active_project and state.active_project.resolve() == target.resolve():
         state.active_project = None
 
-    unregister_project(target.name)
+    # Clean up wizard state
+    state._wizard.pop("delete_target", None)
+
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        print_error(f"Directory removal failed: {exc}")
+        print_warning("Project unregistered but files may remain on disk.")
+        return CommandResult(ok=False, style="silent")
+
+    # Clean up conda environment if it exists (only after successful rmtree)
+    remove_conda_env(target.name)
 
     print_success(f"Project [bold]{target.name}[/bold] deleted.")
     suggest_next("View remaining: [bold]/repos[/bold]")

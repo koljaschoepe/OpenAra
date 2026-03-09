@@ -1,0 +1,3 @@
+# ShellCheck configuration
+# SC1091: Not following sourced files (paths are dynamic)
+disable=SC1091

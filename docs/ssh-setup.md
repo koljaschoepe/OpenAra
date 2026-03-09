@@ -40,10 +40,10 @@ mkdir -p ~/.ssh/sockets
 nano ~/.ssh/config
 ```
 
-Add this block (replace `HOSTNAME` and `USER`):
+Add this block (replace `dev`, `HOSTNAME`, and `USER` with your values):
 
 ```
-Host mydevice
+Host dev
     HostName HOSTNAME.local
     User USER
     IdentityFile ~/.ssh/id_ed25519
@@ -57,7 +57,7 @@ Host mydevice
 Now you can connect with just:
 
 ```bash
-ssh mydevice
+ssh dev
 ```
 
 See [`config/mac-ssh-config`](../config/mac-ssh-config) for a full template with port forwarding examples.
@@ -79,6 +79,6 @@ type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh username@hostname.local "mkdir -
 
 **"Permission denied (publickey)"** — Your key wasn't copied. Run `ssh-copy-id` again.
 
-**"Could not resolve hostname"** — mDNS may not be running yet. Use the IP address instead: `ssh username@192.168.1.x`
+**"Could not resolve hostname"** — mDNS may not be running yet. Use the IP address instead: `ssh username@192.168.1.x`. On Windows, `.local` addresses require Bonjour/mDNS support — install [Bonjour Print Services](https://support.apple.com/kb/DL999) or use the IP address.
 
 **Connection drops** — Clear stale sockets: `rm -f ~/.ssh/sockets/*`

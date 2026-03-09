@@ -43,7 +43,10 @@ def configure_n8n_mcp(api_key: str | None = None) -> tuple[bool, str]:
         },
     }
 
-    save_claude_json(data)
+    try:
+        save_claude_json(data)
+    except OSError as exc:
+        return False, f"Failed to save ~/.claude.json: {exc}"
     return True, "n8n MCP server configured in ~/.claude.json"
 
 
@@ -58,5 +61,8 @@ def remove_n8n_mcp() -> tuple[bool, str]:
         return False, "n8n MCP server not configured"
 
     del servers[MCP_SERVER_NAME]
-    save_claude_json(data)
+    try:
+        save_claude_json(data)
+    except OSError as exc:
+        return False, f"Failed to save ~/.claude.json: {exc}"
     return True, "n8n MCP server removed from ~/.claude.json"

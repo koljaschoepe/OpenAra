@@ -24,10 +24,10 @@ def _browsers_path() -> Path:
     env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if env:
         return Path(env)
-    cache = _storage_browser_cache()
-    if cache.exists():
-        return cache
-    return FALLBACK_BROWSER_CACHE
+    # Always return the intended storage path (even if not yet created).
+    # The install step will create it. Previously this checked .exists(),
+    # causing fresh installs to download to the wrong fallback location.
+    return _storage_browser_cache()
 
 
 def _find_chromium_binary() -> Path | None:
@@ -142,34 +142,39 @@ def install_browser() -> tuple[bool, list[str]]:
     """Install/update Playwright + Chromium. Requires system packages pre-installed."""
     lines: list[str] = []
 
-    if not is_playwright_installed():
-        lines.append("Installing Playwright...")
+    try:
+        if not is_playwright_installed():
+            lines.append("Installing Playwright...")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "playwright"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                return False, lines + [f"pip install playwright failed: {result.stderr[:200]}"]
+            lines.append("Playwright installed.")
+
+        cache = _browsers_path()
+        lines.append(f"Downloading Chromium to {cache}...")
+        env = os.environ.copy()
+        env["PLAYWRIGHT_BROWSERS_PATH"] = str(cache)
         result = subprocess.run(
-            ["pip3", "install", "playwright"],
+            [sys.executable, "-m", "playwright", "install", "chromium"],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
+            env=env,
         )
         if result.returncode != 0:
-            return False, lines + [f"pip install playwright failed: {result.stderr[:200]}"]
-        lines.append("Playwright installed.")
+            return False, lines + [f"Chromium download failed: {result.stderr[:200]}"]
+        lines.append("Chromium downloaded.")
 
-    cache = _browsers_path()
-    lines.append(f"Downloading Chromium to {cache}...")
-    env = os.environ.copy()
-    env["PLAYWRIGHT_BROWSERS_PATH"] = str(cache)
-    result = subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium"],
-        capture_output=True,
-        text=True,
-        timeout=300,
-        env=env,
-    )
-    if result.returncode != 0:
-        return False, lines + [f"Chromium download failed: {result.stderr[:200]}"]
-    lines.append("Chromium downloaded.")
-
-    return True, lines
+        return True, lines
+    except subprocess.TimeoutExpired:
+        return False, lines + ["Installation timed out. Slow network or storage."]
+    except OSError as exc:
+        return False, lines + [f"Installation error: {exc}"]
 
 
 def is_mcp_configured() -> bool:
@@ -194,6 +199,9 @@ def configure_mcp() -> tuple[bool, str]:
         "args": ["-y", "@playwright/mcp@0.0.28", "--browser", "chromium", "--headless"],
         "env": {
             "PLAYWRIGHT_BROWSERS_PATH": str(_browsers_path()),
+            # Sandbox disabled: Chromium sandbox requires suid helper or user namespaces.
+            # On headless SBCs running as non-root, sandbox setup is impractical.
+            # Risk: reduced browser process isolation if visiting untrusted pages.
             "PLAYWRIGHT_MCP_NO_SANDBOX": "true",
         },
     }

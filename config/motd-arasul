@@ -1,10 +1,12 @@
 #!/bin/bash
 # Arasul MOTD — show detected platform info on SSH login
 
-# Detect platform and model
-if [[ -f /proc/device-tree/compatible ]] && grep -q "nvidia" /proc/device-tree/compatible 2>/dev/null; then
+# Detect platform and model (matches detect.sh strategy)
+if [[ -f /etc/nv_tegra_release ]] || dpkg -l nvidia-l4t-core &>/dev/null || \
+   { [[ -f /proc/device-tree/compatible ]] && grep -qi "tegra" /proc/device-tree/compatible 2>/dev/null; }; then
     MODEL=$(tr '\0' '\n' < /proc/device-tree/model 2>/dev/null | head -1)
-    CUDA_VER=$(dpkg -l 2>/dev/null | grep -oP 'cuda-toolkit-\K[0-9]+[-\.][0-9]+' | head -1 | tr - .)
+    CUDA_VER=$(python3 -c 'import json,pathlib;print(json.loads(pathlib.Path("/usr/local/cuda/version.json").read_text())["cuda"]["version"])' 2>/dev/null \
+        || nvcc --version 2>/dev/null | grep -oP 'release \K[\d.]+' || echo "")
     GPU_INFO="${CUDA_VER:+ | CUDA $CUDA_VER}"
 elif [[ -f /proc/device-tree/model ]] && grep -qi "raspberry" /proc/device-tree/model 2>/dev/null; then
     MODEL=$(tr '\0' '\n' < /proc/device-tree/model 2>/dev/null | head -1)

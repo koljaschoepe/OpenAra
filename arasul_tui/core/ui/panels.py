@@ -32,11 +32,16 @@ from arasul_tui.core.ui.output import (
 
 def _vis_len(s: str) -> int:
     """Visible cell width of a string that may contain Rich markup."""
-    return Text.from_markup(s).cell_len
+    try:
+        return Text.from_markup(s).cell_len
+    except Exception:
+        # Malformed markup — fall back to plain length
+        return len(s)
 
 
 def _bar(pct: float, width: int = 10) -> str:
     """Render a modern block bar like ▰▰▰▱▱▱▱▱ with color based on percentage."""
+    pct = max(0.0, min(100.0, pct))
     filled = int(round(pct / 100 * width))
     empty = width - filled
     if pct >= 90:

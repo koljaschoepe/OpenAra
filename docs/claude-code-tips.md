@@ -5,10 +5,10 @@ Useful Claude Code patterns and workflows for working on Arasul-managed devices 
 ## Quick Start
 
 ```bash
-ssh mydevice
-t                    # tmux session
+ssh dev                       # SSH alias (see docs/ssh-setup.md)
+t                             # tmux session (alias for: tmux attach -t dev || tmux new -s dev)
 cd ~/projects/my-app
-claude               # Start Claude Code
+claude                        # Start Claude Code
 ```
 
 ## Useful Claude Code Prompts

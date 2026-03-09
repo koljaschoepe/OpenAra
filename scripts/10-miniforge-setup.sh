@@ -25,6 +25,7 @@ ENVS_DIR="${STORAGE_MOUNT}/envs"
 ARCH="$(uname -m)"
 INSTALLER_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${ARCH}.sh"
 INSTALLER_PATH="$(mktemp /tmp/miniforge3-XXXXXX.sh)"
+trap 'rm -f "$INSTALLER_PATH"' EXIT
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks
@@ -73,8 +74,9 @@ fi
 log "Configuring conda (no global activation)..."
 
 # Initialize conda for the user's shell but disable auto-activation
-"$MINIFORGE_DIR/bin/conda" config --set auto_activate_base false
-"$MINIFORGE_DIR/bin/conda" config --set envs_dirs "$ENVS_DIR"
+# Run as the real user so settings go to user's ~/.condarc (not root's)
+run_as_user "$MINIFORGE_DIR/bin/conda config --set auto_activate_base false"
+run_as_user "$MINIFORGE_DIR/bin/conda config --set envs_dirs \"$ENVS_DIR\""
 
 # Create shared envs directory
 mkdir -p "$ENVS_DIR"

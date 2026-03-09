@@ -19,9 +19,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
-      - run: ruff check .
-      - run: ruff format --check .
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check .
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check .
 
   lint-shell:
     name: Lint Shell Scripts
@@ -29,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run ShellCheck
-        run: shellcheck -x --exclude=SC1091 scripts/*.sh setup.sh arasul_tui/install.sh lib/detect.sh lib/common.sh
+        run: shellcheck -x --exclude=SC1091 scripts/*.sh setup.sh install.sh arasul_tui/install.sh lib/detect.sh lib/common.sh
 
   test:
     name: Test Python ${{ matrix.python-version }}
@@ -45,7 +48,9 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]"
-      - run: pytest tests/ -v --tb=short --cov=arasul_tui --cov-report=term-missing --cov-report=xml --cov-fail-under=65
+      - name: Smoke test CLI entry point
+        run: python -c "from arasul_tui.app import run; print('CLI entry point OK')"
+      - run: pytest tests/ -v --tb=short --cov=arasul_tui --cov-report=term-missing --cov-report=xml --cov-fail-under=70
       - name: Upload coverage
         if: matrix.python-version == '3.12' && github.ref == 'refs/heads/main'
         uses: codecov/codecov-action@v5

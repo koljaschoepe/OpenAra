@@ -20,7 +20,19 @@ REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 PLATFORM="${PLATFORM:-$(detect_platform)}"
 STORAGE_MOUNT="${STORAGE_MOUNT:-$(detect_storage_mount)}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+NODE_VERSION="${NODE_VERSION:-22}"
 NVM_DIR="${REAL_HOME}/.nvm"
+DEVICE_HOSTNAME="${DEVICE_HOSTNAME:-$(hostname)}"
+CUSTOMER_NAME="${CUSTOMER_NAME:-arasul}"
+INSTALL_CLAUDE="${INSTALL_CLAUDE:-true}"
+INSTALL_OLLAMA="${INSTALL_OLLAMA:-false}"
+GIT_USER_NAME="${GIT_USER_NAME:-}"
+GIT_USER_EMAIL="${GIT_USER_EMAIL:-}"
+
+# ---------------------------------------------------------------------------
+# Ensure package index is current (needed for standalone execution)
+# ---------------------------------------------------------------------------
+apt-get update -qq 2>/dev/null || warn "apt-get update failed — packages may be stale"
 
 # ---------------------------------------------------------------------------
 # Build essentials (for native npm/pip packages)
@@ -45,8 +57,10 @@ fi
 
 if [[ -n "${GIT_USER_NAME:-}" ]] && [[ "$GIT_USER_NAME" != "CHANGEME" ]]; then
     sudo -u "$REAL_USER" -H git config --global user.name "$GIT_USER_NAME"
-    sudo -u "$REAL_USER" -H git config --global user.email "$GIT_USER_EMAIL"
-    log "Git configured: ${GIT_USER_NAME} <${GIT_USER_EMAIL}>"
+    if [[ -n "${GIT_USER_EMAIL:-}" ]] && [[ "$GIT_USER_EMAIL" != "CHANGEME" ]]; then
+        sudo -u "$REAL_USER" -H git config --global user.email "$GIT_USER_EMAIL"
+    fi
+    log "Git configured: ${GIT_USER_NAME} <${GIT_USER_EMAIL:-not set}>"
 else
     warn "Git user.name not set — configure manually:"
     warn "  git config --global user.name 'Your Name'"
@@ -94,6 +108,10 @@ fi
 if [[ ! -d "$NVM_DIR" ]]; then
     log "Installing nvm + Node.js ${NODE_VERSION} LTS..."
     run_as_user "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"
+    if [[ ! -f "${NVM_DIR}/nvm.sh" ]]; then
+        err "nvm installation failed — ${NVM_DIR}/nvm.sh not found"
+        exit 1
+    fi
     run_as_user "export NVM_DIR='${NVM_DIR}' && source '${NVM_DIR}/nvm.sh' && nvm install ${NODE_VERSION} && nvm alias default ${NODE_VERSION}"
     log "Node.js installed via nvm"
 else
@@ -102,6 +120,16 @@ fi
 
 NODE_VER=$(run_as_user "export NVM_DIR='${NVM_DIR}' && source '${NVM_DIR}/nvm.sh' && node --version" 2>/dev/null || echo "not found")
 log "Node.js version: ${NODE_VER}"
+
+# Create global symlinks so npx/node are available without sourcing nvm.sh
+# (needed by Claude Code MCP subprocess spawning)
+NPX_PATH=$(run_as_user "export NVM_DIR='${NVM_DIR}' && source '${NVM_DIR}/nvm.sh' && command -v npx" 2>/dev/null || true)
+if [[ -n "$NPX_PATH" && -f "$NPX_PATH" ]]; then
+    ln -sf "$NPX_PATH" /usr/local/bin/npx
+    NODE_PATH=$(run_as_user "export NVM_DIR='${NVM_DIR}' && source '${NVM_DIR}/nvm.sh' && command -v node" 2>/dev/null || true)
+    [[ -n "$NODE_PATH" && -f "$NODE_PATH" ]] && ln -sf "$NODE_PATH" /usr/local/bin/node
+    log "Global symlinks created: /usr/local/bin/{node,npx}"
+fi
 
 # ---------------------------------------------------------------------------
 # Python virtual environment
@@ -143,8 +171,12 @@ if [[ "${INSTALL_OLLAMA}" == "true" ]]; then
     if ! command -v ollama &>/dev/null; then
         log "Installing Ollama..."
         curl -fsSL https://ollama.com/install.sh | sh
-        # Model directory on external storage
-        if [[ -d "${STORAGE_MOUNT}/models" ]]; then
+        if ! command -v ollama &>/dev/null; then
+            warn "Ollama installation failed — command not found after install"
+        fi
+        # Model directory on external storage (create if storage is available)
+        if mountpoint -q "$STORAGE_MOUNT" 2>/dev/null || [[ -d "$STORAGE_MOUNT" ]]; then
+            mkdir -p "${STORAGE_MOUNT}/models/ollama"
             mkdir -p /etc/systemd/system/ollama.service.d
             cat > /etc/systemd/system/ollama.service.d/override.conf << EOF
 [Service]
@@ -152,8 +184,10 @@ Environment="OLLAMA_MODELS=${STORAGE_MOUNT}/models/ollama"
 EOF
             systemctl daemon-reload
             systemctl restart ollama
+            log "Ollama installed (models: ${STORAGE_MOUNT}/models/ollama)"
+        else
+            log "Ollama installed (models: default location)"
         fi
-        log "Ollama installed (models: ${STORAGE_MOUNT}/models/ollama)"
     else
         skip "Ollama already installed"
     fi

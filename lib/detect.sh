@@ -119,18 +119,32 @@ detect_ram_mb() {
 detect_storage_device() {
     local device
 
-    # Check for NVMe
+    # Check for NVMe (skip if it's the boot drive with root "/" mounted)
     device=$(lsblk -dno PATH,TRAN 2>/dev/null | awk '$2=="nvme" { print $1; exit }')
     if [[ -n "$device" ]]; then
-        echo "$device"
-        return
+        local root_mount
+        root_mount=$(lsblk -nro MOUNTPOINT "$device" 2>/dev/null | grep '^/$')
+        if [[ -z "$root_mount" ]]; then
+            echo "$device"
+            return
+        fi
+        # NVMe is boot drive — skip, check for USB storage instead
+        device=""
     fi
 
     # Check for USB storage (likely SSD/HDD via USB adapter)
+    # Skip small USB drives (<32GB) to avoid treating USB sticks as external storage
     device=$(lsblk -dno PATH,TRAN,TYPE 2>/dev/null | awk '$2=="usb" && $3=="disk" { print $1; exit }')
     if [[ -n "$device" ]]; then
-        echo "$device"
-        return
+        local size_bytes
+        size_bytes=$(lsblk -bdno SIZE "$device" 2>/dev/null || echo 0)
+        # 32GB threshold (32 * 1024^3 = 34359738368)
+        if (( size_bytes >= 34359738368 )); then
+            echo "$device"
+            return
+        fi
+        # Too small — likely a USB thumb drive, skip
+        device=""
     fi
 
     # No external storage found
@@ -151,9 +165,10 @@ detect_storage_type() {
     transport=$(lsblk -dno TRAN "$device" 2>/dev/null)
 
     case "$transport" in
-        nvme) echo "nvme" ;;
-        usb)  echo "usb_ssd" ;;
-        *)    echo "sd_only" ;;
+        nvme)      echo "nvme" ;;
+        usb)       echo "usb_ssd" ;;
+        sata|ata)  echo "usb_ssd" ;;  # SATA SSD treated as external fast storage
+        *)         echo "sd_only" ;;
     esac
 }
 
@@ -178,7 +193,13 @@ detect_storage_mount() {
     if [[ -z "$device" ]]; then
         # No external storage — use home directory
         if [[ -n "${REAL_USER:-}" ]]; then
-            getent passwd "$REAL_USER" | cut -d: -f6
+            local home_dir
+            home_dir=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6)
+            echo "${home_dir:-/home/${REAL_USER}}"
+        elif [[ -n "${SUDO_USER:-}" ]]; then
+            local home_dir
+            home_dir=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+            echo "${home_dir:-/home/${SUDO_USER}}"
         else
             echo "$HOME"
         fi
@@ -186,10 +207,30 @@ detect_storage_mount() {
     fi
 
     # Check if device (or a partition of it) is already mounted
+    # Filter out root "/" — if NVMe is the boot drive, it's not external storage
     local mount_point
-    mount_point=$(lsblk -nro MOUNTPOINT "$device" 2>/dev/null | grep -v '^$' | head -1)
+    mount_point=$(lsblk -nro MOUNTPOINT "$device" 2>/dev/null | grep -v '^$' | grep -v '^/$' | head -1)
     if [[ -n "$mount_point" ]] && [[ -d "$mount_point" ]]; then
         echo "$mount_point"
+        return
+    fi
+
+    # If the only mount point is "/", this is the boot drive — treat as no external storage
+    local root_check
+    root_check=$(lsblk -nro MOUNTPOINT "$device" 2>/dev/null | grep -v '^$' | head -1)
+    if [[ "$root_check" == "/" ]]; then
+        # Boot drive — fall back to home directory
+        if [[ -n "${REAL_USER:-}" ]]; then
+            local home_dir
+            home_dir=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6)
+            echo "${home_dir:-/home/${REAL_USER}}"
+        elif [[ -n "${SUDO_USER:-}" ]]; then
+            local home_dir
+            home_dir=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+            echo "${home_dir:-/home/${SUDO_USER}}"
+        else
+            echo "$HOME"
+        fi
         return
     fi
 
@@ -211,7 +252,7 @@ has_docker() {
 }
 
 has_nvidia_runtime() {
-    has_docker && docker info 2>/dev/null | grep -qi "nvidia"
+    has_docker && timeout 3 docker info 2>/dev/null | grep -qi "nvidia"
 }
 
 # ---------------------------------------------------------------------------

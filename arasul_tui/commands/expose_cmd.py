@@ -94,7 +94,7 @@ def cmd_expose(state: TuiState, args: list[str]) -> CommandResult:
     elif sub == "off":
 
         def _stop() -> subprocess.CompletedProcess[str]:
-            return _run(["tailscale", "funnel", "--bg", "off"], timeout=15)
+            return _run(["tailscale", "funnel", "off"], timeout=15)
 
         try:
             result = spinner_run("Stopping Funnel...", _stop)

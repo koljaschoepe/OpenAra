@@ -17,7 +17,7 @@ Thank you for your interest in contributing! This project helps people set up Li
 3. Make your changes
 4. Run tests: `pytest tests/`
 5. Run linting: `ruff check .` and `ruff format --check .`
-6. Run shellcheck on any modified shell scripts: `shellcheck scripts/*.sh`
+6. Run shellcheck on any modified shell scripts: `shellcheck -x --exclude=SC1091 scripts/*.sh setup.sh arasul_tui/install.sh lib/detect.sh lib/common.sh`
 7. Commit with a clear message
 8. Push and open a Pull Request
 
@@ -49,6 +49,7 @@ pytest tests/
 
 - Tests are in `tests/` using pytest
 - Run with: `pytest tests/ -v`
+- CI enforces a **70% minimum coverage** threshold — PRs that drop below will fail
 - New features should include tests where possible
 
 ### Areas Where Help Is Appreciated

@@ -57,6 +57,8 @@ build/
 /tasks/
 
 # Developer-only docs (not for public repo)
-/CLAUDE.md
 CLAUDE.local.md
-/CHANGELOG.md
+# coverage reports
+coverage.json
+coverage.xml
+htmlcov/

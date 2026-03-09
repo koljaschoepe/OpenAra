@@ -158,7 +158,7 @@ def print_result(result: CommandResult) -> None:
         text = "\n".join(wrapped_lines)
         left_pad = _frame_left_pad() + 2
         p = Panel(
-            RichText.from_markup(text, no_wrap=True, overflow="ellipsis"),
+            RichText(text, no_wrap=True, overflow="ellipsis"),
             border_style="dim",
             box=box.ROUNDED,
             padding=(0, 2),
@@ -208,5 +208,5 @@ def spinner_run(msg: str, func: Callable[[], Any]) -> Any:
             time.sleep(0.1)
 
     if error:
-        raise error
+        raise error from error  # preserve original traceback
     return result

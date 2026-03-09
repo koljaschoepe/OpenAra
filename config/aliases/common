@@ -14,7 +14,8 @@ alias atui='arasul'
 # System monitoring
 alias temps='cat /sys/devices/virtual/thermal/thermal_zone*/type /sys/devices/virtual/thermal/thermal_zone*/temp 2>/dev/null | paste - - | column -t'
 alias ram='free -h'
-alias disk='df -h / 2>/dev/null'
+alias disk='df -h / __STORAGE_MOUNT__ 2>/dev/null | uniq'
+alias storage='cd __STORAGE_MOUNT__'
 alias ports='sudo lsof -i -P -n | grep LISTEN'
 
 # Docker

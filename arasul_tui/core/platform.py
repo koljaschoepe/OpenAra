@@ -180,7 +180,7 @@ def detect_gpu() -> GpuInfo:
     if gpu_type == "nvidia":
         cuda_version = _detect_cuda_version()
 
-    return GpuInfo(type=gpu_type, has_cuda=gpu_type == "nvidia", cuda_version=cuda_version)
+    return GpuInfo(type=gpu_type, has_cuda=gpu_type == "nvidia" and bool(cuda_version), cuda_version=cuda_version)
 
 
 def _detect_cuda_version() -> str:
@@ -206,16 +206,30 @@ def _detect_cuda_version() -> str:
     return ""
 
 
+def _real_user_home() -> Path:
+    """Return the real user's home (not root's when running via sudo)."""
+    user = os.environ.get("SUDO_USER") or os.environ.get("USER") or ""
+    if user:
+        import pwd
+
+        try:
+            return Path(pwd.getpwnam(user).pw_dir)
+        except KeyError:
+            pass
+    return Path.home()
+
+
 def detect_storage() -> StorageInfo:
     """Detect best available storage."""
     device = ""
     storage_type = "sd_only"
-    mount = Path.home()
+    mount = _real_user_home()
 
     # Check environment overrides (legacy support)
     env_mount = os.environ.get("STORAGE_MOUNT") or os.environ.get("NVME_MOUNT")
     if env_mount:
         p = Path(env_mount)
+        dev_path = ""
         # Detect actual type from mount's underlying device
         if p.exists():
             dev_path = _run(["findmnt", "-n", "-o", "SOURCE", str(p)])
@@ -229,7 +243,8 @@ def detect_storage() -> StorageInfo:
                     storage_type = "sd_only"
             elif "nvme" in env_mount.lower():
                 storage_type = "nvme"
-        return StorageInfo(type=storage_type, mount=p, device="")
+        env_device = dev_path.split("[")[0] if dev_path else ""
+        return StorageInfo(type=storage_type, mount=p, device=env_device)
 
     # Auto-detect via lsblk
     lsblk_out = _run(["lsblk", "-dno", "PATH,TRAN"])
@@ -239,20 +254,42 @@ def detect_storage() -> StorageInfo:
             if len(parts) >= 2:
                 path, tran = parts[0], parts[1]
                 if tran == "nvme":
+                    # Skip NVMe if it's the boot drive (root "/" mounted)
+                    mp_check = _run(["lsblk", "-nro", "MOUNTPOINT", path])
+                    boot_mounts = [ln for ln in mp_check.splitlines() if ln.strip()] if mp_check else []
+                    if "/" in boot_mounts:
+                        continue  # Boot drive — not external storage
                     device = path
                     storage_type = "nvme"
                     break
+                if tran in ("sata", "ata") and not device:
+                    # SATA/ATA SSD (direct connection, not via USB)
+                    dtype = _run(["lsblk", "-dno", "TYPE", path])
+                    if dtype == "disk":
+                        device = path
+                        storage_type = "usb_ssd"  # treat same as USB-SSD
+                        break
                 if tran == "usb" and not device:
                     # Verify it's a disk, not a USB hub device
                     dtype = _run(["lsblk", "-dno", "TYPE", path])
                     if dtype == "disk":
+                        # Skip small USB drives (<32GB) — likely thumb drives
+                        size_str = _run(["lsblk", "-bdno", "SIZE", path])
+                        if size_str:
+                            try:
+                                if int(size_str) < 34_359_738_368:  # 32 GiB
+                                    continue
+                            except ValueError:
+                                pass
                         device = path
                         storage_type = "usb_ssd"
 
     if device:
-        # Check if already mounted
+        # Check if already mounted (exclude root "/" — handled above)
         mp = _run(["lsblk", "-nro", "MOUNTPOINT", device])
-        lines = [ln for ln in mp.splitlines() if ln.strip()] if mp else []
+        lines = [ln for ln in mp.splitlines() if ln.strip() and ln.strip() != "/"] if mp else []
+        # Use actual mount point if mounted, else /mnt/data as default
+        # (matches shell layer detect_storage_mount behavior)
         mount = Path(lines[0]) if lines else Path("/mnt/data")
     # else: sd_only, mount stays as home dir
 

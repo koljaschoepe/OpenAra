@@ -34,6 +34,21 @@ def load_registry() -> dict[str, list[dict[str, Any]]]:
     try:
         data = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError:
+        # Corrupted YAML — back up and reset to empty
+        import sys
+
+        backup = REGISTRY_PATH.with_suffix(".yaml.bak")
+        try:
+            import shutil
+
+            shutil.copy2(REGISTRY_PATH, backup)
+            print(f"Warning: corrupt projects.yaml backed up to {backup}", file=sys.stderr)
+        except OSError:
+            print("Warning: corrupt projects.yaml (backup failed)", file=sys.stderr)
+        # Reset the file so subsequent saves don't silently lose the backup
+        REGISTRY_PATH.write_text("projects: []\n", encoding="utf-8")
+        data = {"projects": []}
+    if not isinstance(data, dict):
         data = {}
     projects = data.get("projects", [])
     if not isinstance(projects, list):

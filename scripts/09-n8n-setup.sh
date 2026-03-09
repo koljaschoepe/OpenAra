@@ -53,13 +53,20 @@ log "n8n directories created: ${N8N_DIR}/{data,postgres,workflows}"
 # Generate .env (only if not exists — preserves secrets across re-runs)
 # ---------------------------------------------------------------------------
 if [[ ! -f "$N8N_ENV" ]]; then
-    N8N_DB_PASS=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
-    N8N_ENCRYPTION_KEY=$(openssl rand -hex 32)
+    N8N_DB_PASS=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32) || {
+        err "Failed to generate database password (openssl)"; exit 1
+    }
+    N8N_ENCRYPTION_KEY=$(openssl rand -hex 32) || {
+        err "Failed to generate encryption key (openssl)"; exit 1
+    }
+    if [[ -z "$N8N_DB_PASS" || -z "$N8N_ENCRYPTION_KEY" ]]; then
+        err "Generated empty credentials — openssl may be broken"; exit 1
+    fi
 
     # Determine webhook URL
     # Tailscale Funnel proxies HTTPS:443 → localhost:5678, so no port in URL
     N8N_WEBHOOK_URL="http://localhost:5678/"
-    if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
+    if command -v tailscale &>/dev/null && command -v jq &>/dev/null && tailscale status &>/dev/null; then
         TS_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//')
         if [[ -n "$TS_HOSTNAME" && "$TS_HOSTNAME" != "null" ]]; then
             N8N_WEBHOOK_URL="https://${TS_HOSTNAME}/"
@@ -77,9 +84,9 @@ N8N_DB_PASS=${N8N_DB_PASS}
 # Security
 N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
 
-# Network
-N8N_HOST=0.0.0.0
-N8N_BIND_ADDRESS=0.0.0.0
+# Network (bind to localhost — access via SSH tunnel or Tailscale only)
+N8N_HOST=127.0.0.1
+N8N_BIND_ADDRESS=127.0.0.1
 N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
 
 # Storage (used by docker-compose.yml volume mounts)
@@ -99,6 +106,10 @@ fi
 # Copy docker-compose.yml
 # ---------------------------------------------------------------------------
 COMPOSE_SRC="${SCRIPT_DIR}/config/n8n/docker-compose.yml"
+if [[ ! -f "$COMPOSE_SRC" ]]; then
+    err "Missing: ${COMPOSE_SRC} — is the repository checkout complete?"
+    exit 1
+fi
 if [[ ! -f "$N8N_COMPOSE" ]] || ! diff -q "$COMPOSE_SRC" "$N8N_COMPOSE" &>/dev/null; then
     cp "$COMPOSE_SRC" "$N8N_COMPOSE"
     chown "${REAL_USER}:${REAL_USER}" "$N8N_COMPOSE"
@@ -119,10 +130,17 @@ fi
 # ---------------------------------------------------------------------------
 log "Pulling Docker images (this may take a few minutes)..."
 cd "$N8N_DIR"
-sudo -u "$REAL_USER" docker compose pull
-
-log "Starting n8n stack..."
-sudo -u "$REAL_USER" docker compose up -d
+# Use sg to activate docker group membership without re-login
+if id -nG "$REAL_USER" 2>/dev/null | grep -qw docker; then
+    sg docker -c "docker compose pull"
+    log "Starting n8n stack..."
+    sg docker -c "docker compose up -d"
+else
+    # Fallback: run as root (docker socket allows it)
+    docker compose pull
+    log "Starting n8n stack..."
+    docker compose up -d
+fi
 
 # Wait for n8n to be healthy
 info "Waiting for n8n to start..."
@@ -207,7 +225,7 @@ docker compose -f "\$COMPOSE" exec -T postgres \
     pg_dump -U "\${N8N_DB_USER:-n8n}" -d n8n 2>/dev/null | gzip > "\$DUMP_FILE"
 
 # Keep only last 4 weekly backups
-ls -t "\${BACKUP_DIR}"/n8n-postgres-*.sql.gz 2>/dev/null | tail -n +5 | xargs -r rm --
+ls -t "\${BACKUP_DIR}"/n8n-postgres-*.sql.gz 2>/dev/null | tail -n +5 | xargs -r rm -f
 CRONEOF
     chmod +x "$CRON_PGDUMP"
     log "Cron installed: weekly PostgreSQL backup"
@@ -224,13 +242,17 @@ if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
     log "Tailscale serve: n8n accessible over VPN"
 
     # Funnel only webhook paths (public access for external triggers)
+    # SECURITY: This exposes /webhook/* to the public internet via Tailscale Funnel.
+    # Ensure n8n webhook workflows use authentication to prevent abuse.
     tailscale funnel --bg --set-path /webhook 5678 2>/dev/null || true
-    log "Tailscale funnel: /webhook/* exposed publicly"
+    warn "Tailscale funnel: /webhook/* exposed publicly — secure webhook workflows with auth!"
 
-    TS_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//')
-    if [[ -n "$TS_HOSTNAME" && "$TS_HOSTNAME" != "null" ]]; then
-        info "n8n via Tailscale: https://${TS_HOSTNAME}"
-        info "Webhooks: https://${TS_HOSTNAME}/webhook/<id>"
+    if command -v jq &>/dev/null; then
+        TS_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//')
+        if [[ -n "$TS_HOSTNAME" && "$TS_HOSTNAME" != "null" ]]; then
+            info "n8n via Tailscale: https://${TS_HOSTNAME}"
+            info "Webhooks: https://${TS_HOSTNAME}/webhook/<id>"
+        fi
     fi
 else
     info "Tailscale not available — n8n accessible on LAN only"

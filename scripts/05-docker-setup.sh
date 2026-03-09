@@ -5,6 +5,7 @@
 # Data root on external storage if available.
 # =============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # shellcheck source=../lib/common.sh
 source "$(dirname "$0")/../lib/common.sh"
@@ -17,6 +18,8 @@ STORAGE_MOUNT="${STORAGE_MOUNT:-$(detect_storage_mount)}"
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
 DOCKER_LOG_MAX_SIZE="${DOCKER_LOG_MAX_SIZE:-10m}"
 DOCKER_LOG_MAX_FILES="${DOCKER_LOG_MAX_FILES:-3}"
+
+check_root
 
 # ---------------------------------------------------------------------------
 # RPi: Enable cgroup memory (required for Docker memory limits)
@@ -31,7 +34,7 @@ if [[ "$PLATFORM" == "raspberry_pi" ]]; then
     fi
 
     if [[ -n "$cmdline" ]] && ! grep -q "cgroup_enable=memory" "$cmdline"; then
-        sed -i 's/$/ cgroup_enable=memory cgroup_memory=1/' "$cmdline"
+        sed -i '1s/$/ cgroup_enable=memory cgroup_memory=1/' "$cmdline"
         log "cgroup memory enabled in ${cmdline} (reboot required)"
     fi
 fi
@@ -43,15 +46,20 @@ if ! command -v docker &>/dev/null; then
     log "Installing Docker..."
     if has_nvidia_gpu 2>/dev/null; then
         apt-get install -y -qq docker.io nvidia-container-toolkit 2>/dev/null || {
-            warn "Fallback: installing Docker manually..."
+            warn "Fallback: installing Docker via get.docker.com..."
             curl -fsSL https://get.docker.com | sh
             apt-get install -y -qq nvidia-container-toolkit 2>/dev/null || true
         }
     else
         apt-get install -y -qq docker.io 2>/dev/null || {
-            warn "Fallback: installing Docker manually..."
+            warn "Fallback: installing Docker via get.docker.com..."
             curl -fsSL https://get.docker.com | sh
         }
+    fi
+    # Verify Docker is actually available after install
+    if ! command -v docker &>/dev/null; then
+        err "Docker installation failed — docker command not found"
+        exit 1
     fi
 fi
 
@@ -141,23 +149,46 @@ fi
 
 mkdir -p /etc/docker
 if [[ -f "$DAEMON_JSON" ]] && [[ -s "$DAEMON_JSON" ]]; then
+    # Backup existing config before modification
+    cp "$DAEMON_JSON" "${DAEMON_JSON}.bak"
+
     # Merge: existing config takes lower priority, our keys win
     if command -v python3 &>/dev/null; then
-        python3 -c "
+        if python3 - "$DAEMON_JSON" "$DESIRED_JSON" << 'PYEOF'
 import json, sys
-with open('$DAEMON_JSON') as f:
+
+def deep_merge(base, override):
+    """Recursively merge override into base (override wins for scalars)."""
+    result = dict(base)
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+daemon_json, desired_json = sys.argv[1], sys.argv[2]
+with open(daemon_json) as f:
     existing = json.load(f)
-with open('$DESIRED_JSON') as f:
+with open(desired_json) as f:
     desired = json.load(f)
-# Deep merge: desired overwrites existing for top-level keys
-merged = {**existing, **desired}
-# Preserve any extra runtimes from existing config
-if 'runtimes' in existing and 'runtimes' in desired:
-    merged['runtimes'] = {**existing['runtimes'], **desired['runtimes']}
-with open('$DAEMON_JSON', 'w') as f:
+merged = deep_merge(existing, desired)
+with open(daemon_json, 'w') as f:
     json.dump(merged, f, indent=4)
     f.write('\n')
-" && log "Docker daemon.json merged with existing config (data-root: ${DATA_ROOT})"
+PYEOF
+        then
+            # Validate merged JSON before accepting it
+            if python3 -m json.tool "$DAEMON_JSON" >/dev/null 2>&1; then
+                log "Docker daemon.json merged with existing config (data-root: ${DATA_ROOT})"
+            else
+                warn "Merged config is invalid JSON — restoring backup"
+                cp "${DAEMON_JSON}.bak" "$DAEMON_JSON"
+            fi
+        else
+            warn "Failed to merge Docker config — restoring backup"
+            cp "${DAEMON_JSON}.bak" "$DAEMON_JSON"
+        fi
     else
         # No python3 — overwrite (safe: we're installing Docker anyway)
         cp "$DESIRED_JSON" "$DAEMON_JSON"
@@ -188,6 +219,10 @@ fi
 if ! docker compose version &>/dev/null; then
     apt-get install -y -qq docker-compose-plugin 2>/dev/null || {
         COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+        if [[ -z "$COMPOSE_VERSION" ]]; then
+            err "Could not determine Docker Compose version from GitHub API"
+            exit 1
+        fi
         COMPOSE_ARCH=$(uname -m)
         mkdir -p /usr/local/lib/docker/cli-plugins
         curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${COMPOSE_ARCH}" \

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 from pathlib import Path
@@ -330,13 +331,19 @@ def _dispatch_command(state: TuiState, command: str) -> tuple:
 
 
 def run() -> None:
-    state = TuiState(registry=REGISTRY)
+    try:
+        state = TuiState(registry=REGISTRY)
+    except Exception as exc:
+        print_error(f"Startup failed: {exc}")
+        return
+
     pending_handler: PendingHandler | None = None
     wizard_step: tuple[int, int, str] | None = None
     launch_request: tuple[str, Path] | None = None
 
     history_path = Path.home() / ".config" / "arasul" / "history"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        history_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         session: PromptSession[str] = PromptSession(
@@ -355,8 +362,9 @@ def run() -> None:
                 }
             ),
         )
-    except Exception:
+    except Exception as exc:
         # Graceful fallback if prompt_toolkit can't initialize (e.g., broken TTY)
+        print_error(f"Terminal initialization failed: {exc}")
         return
 
     print_header(state, full=True)
@@ -396,8 +404,9 @@ def run() -> None:
             )
         except (EOFError, KeyboardInterrupt):
             break
-        except Exception:
-            # Connection lost or terminal issue — exit gracefully
+        except Exception as exc:
+            # Connection lost or terminal issue — log and exit gracefully
+            print_error(f"Terminal error ({type(exc).__name__}): {exc}")
             break
 
         command = raw.strip()
@@ -421,7 +430,7 @@ def run() -> None:
                 pending_handler = None
                 wizard_step = None
                 state._wizard.clear()
-                print_error(f"Command failed ({type(exc).__name__}).")
+                print_error(f"Command failed ({type(exc).__name__}): {exc}")
                 continue
             pending_handler = None
             wizard_step = None
@@ -436,7 +445,7 @@ def run() -> None:
         try:
             result, launch, should_break = _dispatch_command(state, command)
         except Exception as exc:
-            print_error(f"Command failed ({type(exc).__name__}).")
+            print_error(f"Command failed ({type(exc).__name__}): {exc}")
             continue
         if result:
             _handle_result(result)
@@ -453,7 +462,11 @@ def run() -> None:
         except OSError:
             print_warning(f"Directory not accessible: {cwd}")
             return
-        os.execvp(cmd, [cmd])
+        try:
+            os.execvp(cmd, [cmd])
+        except OSError as exc:
+            print_error(f"Failed to launch [bold]{cmd}[/bold]: {exc}")
+            return
 
 
 if __name__ == "__main__":

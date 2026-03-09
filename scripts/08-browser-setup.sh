@@ -92,13 +92,13 @@ install_playwright_package() {
 setup_browser_cache() {
     if [[ -d "$BROWSER_CACHE" ]]; then
         log "Browser cache already exists: ${BROWSER_CACHE}"
-        return 0
+    else
+        log "Creating browser cache: ${BROWSER_CACHE}"
+        mkdir -p "$BROWSER_CACHE"
+        chown "${REAL_USER}:${REAL_USER}" "$BROWSER_CACHE"
     fi
 
-    log "Creating browser cache: ${BROWSER_CACHE}"
-    mkdir -p "$BROWSER_CACHE"
-    chown "${REAL_USER}:${REAL_USER}" "$BROWSER_CACHE"
-
+    # Always ensure the env var is in .bashrc (even if cache dir already existed)
     local bashrc="${REAL_HOME}/.bashrc"
     if ! grep -q "PLAYWRIGHT_BROWSERS_PATH" "$bashrc" 2>/dev/null; then
         echo "" >> "$bashrc"
@@ -114,7 +114,7 @@ install_chromium() {
     export PLAYWRIGHT_BROWSERS_PATH="$BROWSER_CACHE"
 
     local chromium_dir
-    chromium_dir=$(find "$BROWSER_CACHE" -maxdepth 2 -name "chrome" -type f 2>/dev/null | head -1)
+    chromium_dir=$(find "$BROWSER_CACHE" -maxdepth 4 -name "chrome" -type f 2>/dev/null | head -1)
     if [[ -n "$chromium_dir" ]]; then
         log "Chromium already downloaded in ${BROWSER_CACHE}"
         return 0
@@ -133,17 +133,17 @@ install_chromium() {
 setup_mcp_config() {
     local claude_json="${REAL_HOME}/.claude.json"
 
-    if "${VENV_PYTHON}" -c "
+    if "${VENV_PYTHON}" - "$claude_json" <<'CHECKEOF' 2>/dev/null; then
 import json, sys
 try:
-    d = json.load(open('${claude_json}'))
+    d = json.load(open(sys.argv[1]))
     mcp = d.get('mcpServers', {})
     if 'playwright' in mcp:
         sys.exit(0)
     sys.exit(1)
-except:
+except Exception:
     sys.exit(1)
-" 2>/dev/null; then
+CHECKEOF
         log "Playwright MCP already configured in claude.json."
         return 0
     fi

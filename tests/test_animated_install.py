@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from rich.padding import Padding
 
 from arasul_tui.core.ui.animated_install import (
@@ -44,9 +43,9 @@ class TestBuildInstallPanel:
         assert isinstance(result, Padding)
 
     def test_zero_steps(self):
-        """Edge case: empty steps list causes ZeroDivisionError."""
-        with pytest.raises(ZeroDivisionError):
-            build_install_panel("Empty", [], [], 0, 0, 0.0, False, False)
+        """Edge case: empty steps list returns early without crashing."""
+        result = build_install_panel("Empty", [], [], 0, 0, 0.0, False, False)
+        assert isinstance(result, Padding)
 
     def test_single_step(self):
         result = build_install_panel(

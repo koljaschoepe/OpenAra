@@ -120,6 +120,12 @@ if [[ -d "${OPENARA_DIR}/.git" ]]; then
     fi
     log "Updated to ${OPENARA_VERSION}"
 else
+    # If directory exists but is not a git repo (e.g., failed previous install), remove it
+    if [[ -d "$OPENARA_DIR" ]] && [[ -n "$(ls -A "$OPENARA_DIR" 2>/dev/null)" ]]; then
+        warn "Directory ${OPENARA_DIR} exists but is not a git repo — removing..."
+        sudo rm -rf "$OPENARA_DIR"
+    fi
+
     info "Installing to ${OPENARA_DIR}..."
     sudo mkdir -p "$(dirname "$OPENARA_DIR")"
 

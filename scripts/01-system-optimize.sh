@@ -15,6 +15,9 @@ source "$(dirname "$0")/../lib/detect.sh"
 
 check_root
 
+# Ensure log directory exists (used by health crons and setup scripts)
+mkdir -p /var/log/arasul
+
 # Defaults for standalone execution
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
 REAL_HOME="${REAL_HOME:-$(get_real_home)}"
@@ -23,15 +26,19 @@ PLATFORM="${PLATFORM:-$(detect_platform)}"
 # ---------------------------------------------------------------------------
 # Disable desktop environment
 # ---------------------------------------------------------------------------
-CURRENT_TARGET=$(systemctl get-default)
-if [[ "$CURRENT_TARGET" == "graphical.target" ]]; then
-    log "Switching to multi-user.target (headless)..."
-    systemctl set-default multi-user.target
-    systemctl stop gdm3 2>/dev/null || true
-    systemctl disable gdm3 2>/dev/null || true
-    log "Desktop disabled — ~800MB RAM saved"
+if command -v systemctl &>/dev/null; then
+    CURRENT_TARGET=$(systemctl get-default 2>/dev/null || echo "unknown")
+    if [[ "$CURRENT_TARGET" == "graphical.target" ]]; then
+        log "Switching to multi-user.target (headless)..."
+        systemctl set-default multi-user.target
+        systemctl stop gdm3 2>/dev/null || true
+        systemctl disable gdm3 2>/dev/null || true
+        log "Desktop disabled — ~800MB RAM saved"
+    else
+        skip "Already in headless mode"
+    fi
 else
-    skip "Already in headless mode"
+    skip "systemd not available — skipping desktop disable"
 fi
 
 # ---------------------------------------------------------------------------
@@ -61,7 +68,7 @@ done
 
 # wpa_supplicant: only disable if connected via Ethernet (WiFi disable = brick)
 if systemctl is-enabled wpa_supplicant.service &>/dev/null; then
-    if ip route show default | grep -q "dev eth\|dev enp"; then
+    if ip route show default | grep -qE "dev (eth|enp|eno|ens)"; then
         systemctl disable --now wpa_supplicant.service 2>/dev/null || true
         log "Disabled: wpa_supplicant.service (Ethernet connection detected)"
     else
@@ -73,7 +80,7 @@ fi
 # Remove desktop packages (~3GB disk space)
 # ---------------------------------------------------------------------------
 if dpkg -l | grep -q ubuntu-desktop 2>/dev/null; then
-    log "Removing desktop packages (takes a few minutes)..."
+    log "Removing Ubuntu desktop packages (takes a few minutes)..."
     apt-get remove --purge -y \
         ubuntu-desktop \
         gdm3 \
@@ -82,7 +89,7 @@ if dpkg -l | grep -q ubuntu-desktop 2>/dev/null; then
         nautilus \
         firefox \
         thunderbird \
-        libreoffice* \
+        'libreoffice*' \
         2>/dev/null || true
     apt-get autoremove --purge -y 2>/dev/null || true
     apt-get clean
@@ -90,8 +97,23 @@ if dpkg -l | grep -q ubuntu-desktop 2>/dev/null; then
     # NetworkManager must survive
     apt-get install -y network-manager 2>/dev/null || true
     log "Desktop packages removed — ~3GB disk space freed"
+elif dpkg -l | grep -q raspberrypi-ui-mods 2>/dev/null; then
+    log "Removing Raspberry Pi desktop packages..."
+    apt-get remove --purge -y \
+        raspberrypi-ui-mods \
+        lightdm \
+        lxde-core \
+        lxpanel \
+        lxappearance \
+        pcmanfm \
+        rpd-wallpaper \
+        'libreoffice*' \
+        2>/dev/null || true
+    apt-get autoremove --purge -y 2>/dev/null || true
+    apt-get clean
+    log "RPi desktop packages removed — ~800MB freed"
 else
-    skip "Desktop packages already removed"
+    skip "Desktop packages already removed (or headless install)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -103,6 +125,7 @@ apt-get update -qq
 BASE_PACKAGES=(
     curl wget htop tree jq unzip net-tools
     smartmontools lsof ca-certificates gnupg
+    parted
 )
 
 # Only install nvme-cli if NVMe storage detected
@@ -125,9 +148,13 @@ if [[ -f "$OLD_SYSCTL_FILE" ]] && [[ ! -f "$SYSCTL_FILE" ]]; then
     log "Renamed ${OLD_SYSCTL_FILE} → ${SYSCTL_FILE}"
 fi
 
-if [[ ! -f "$SYSCTL_FILE" ]]; then
+SYSCTL_VERSION="2"  # Bump to force regeneration on upgrades
+
+if [[ ! -f "$SYSCTL_FILE" ]] || ! grep -q "# version=$SYSCTL_VERSION" "$SYSCTL_FILE" 2>/dev/null; then
+    [[ -f "$SYSCTL_FILE" ]] && backup_config "$SYSCTL_FILE"
     cat > "$SYSCTL_FILE" << 'EOF'
 # Arasul Dev Server — Kernel Tuning
+# version=2
 vm.swappiness=10
 vm.vfs_cache_pressure=50
 vm.dirty_ratio=10
@@ -210,14 +237,22 @@ fi
 # ---------------------------------------------------------------------------
 # OOM protection for critical services
 # ---------------------------------------------------------------------------
-SSH_OOM_DIR="/etc/systemd/system/ssh.service.d"
+# Detect SSH service name (ssh.service on Ubuntu 22.04+, sshd.service on older/other)
+if systemctl cat ssh.service &>/dev/null; then
+    SSH_SERVICE="ssh"
+elif systemctl cat sshd.service &>/dev/null; then
+    SSH_SERVICE="sshd"
+else
+    SSH_SERVICE="ssh"
+fi
+SSH_OOM_DIR="/etc/systemd/system/${SSH_SERVICE}.service.d"
 if [[ ! -f "${SSH_OOM_DIR}/oom.conf" ]]; then
     mkdir -p "$SSH_OOM_DIR"
     cat > "${SSH_OOM_DIR}/oom.conf" << 'EOF'
 [Service]
 OOMScoreAdjust=-900
 EOF
-    log "OOM protection set for SSH (score -900)"
+    log "OOM protection set for ${SSH_SERVICE} (score -900)"
 else
     skip "SSH OOM protection already configured"
 fi
@@ -244,7 +279,7 @@ if ! dpkg -l unattended-upgrades 2>/dev/null | grep -q "^ii"; then
 fi
 
 UNATTENDED_CONF="/etc/apt/apt.conf.d/50unattended-upgrades"
-if [[ ! -f "$UNATTENDED_CONF" ]] || ! grep -q "Package-Blacklist" "$UNATTENDED_CONF" 2>/dev/null; then
+if [[ ! -f "$UNATTENDED_CONF" ]] || ! grep -qE "Package-(Blacklist|Blocklist)" "$UNATTENDED_CONF" 2>/dev/null; then
     cat > "$UNATTENDED_CONF" << 'EOF'
 Unattended-Upgrade::Allowed-Origins {
     "${distro_id}:${distro_codename}-security";

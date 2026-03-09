@@ -149,10 +149,11 @@ def test_wizard_step_account_info_invalid_json():
 
 def test_wizard_step_account_info_plain_uuid():
     state = _state()
-    result = _wizard_step_account_info(state, "abc-def-123-456")
+    uuid = "abcdef01-2345-6789-abcd-ef0123456789"
+    result = _wizard_step_account_info(state, uuid)
     assert result.ok is True
     assert result.pending_handler is _wizard_step_email
-    assert state._wizard_uuid == "abc-def-123-456"
+    assert state._wizard_uuid == uuid
 
 
 def test_wizard_step_account_info_email_rejected():

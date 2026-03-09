@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rich.markup import escape as _escape_markup
 from rich.text import Text
 
 from arasul_tui.core.cache import cached_cmd, parallel_cmds
@@ -117,7 +118,7 @@ def _system_info() -> dict[str, Any]:
 
     # Platform-specific commands
     if platform.is_jetson:
-        cmds["power"] = ("sudo nvpmodel -q 2>/dev/null | head -1 | sed 's/NV Power Mode: //'", 4)
+        cmds["power"] = ("nvpmodel -q 2>/dev/null | head -1 | sed 's/NV Power Mode: //'", 4)
         cmds["gpu"] = ("cat /sys/devices/gpu.0/load 2>/dev/null", 4)
     elif platform.is_raspberry_pi:
         cmds["temp"] = ("vcgencmd measure_temp 2>/dev/null | awk -F'[=.]' '{print $2}'", 4)
@@ -260,10 +261,14 @@ def _build_full_dashboard(state: TuiState, content_w: int) -> list[str]:
     def _box_row_closed(content: str) -> str:
         vis = _vis_len(content)
         if vis > box_w:
-            # Truncate plain text portions to fit
-            t = Text.from_markup(content)
-            t.truncate(box_w - 1)
-            content = t.markup + "\u2026"
+            # Truncate to fit — use plain text to avoid broken markup after truncation
+            try:
+                t = Text.from_markup(content)
+                t.truncate(box_w - 1)
+                # Use plain text + ellipsis to prevent invalid markup from t.markup
+                content = f"[{DIM}]{_escape_markup(t.plain)}\u2026[/{DIM}]"
+            except Exception:
+                content = content[: box_w - 1] + "\u2026"
             vis = _vis_len(content)
         pad_n = max(0, box_w - vis)
         return f"  [{DIM}]{_vline}[/{DIM}]{content}{' ' * pad_n}[{DIM}]{_vline}[/{DIM}]"
@@ -275,8 +280,9 @@ def _build_full_dashboard(state: TuiState, content_w: int) -> list[str]:
         avail = box_w - used
         detail_vis = _vis_len(detail)
         if detail_vis > avail and avail > 1:
-            # Truncate plain text, preserving markup ratio
-            detail = detail[: max(1, avail - 1)] + "\u2026"
+            t = Text.from_markup(detail)
+            t.truncate(max(1, avail - 1))
+            detail = t.plain + "\u2026"
         return _box_row_closed(f"  {label:<5}{bar}  [{DIM}]{detail}[/{DIM}]")
 
     def _empty_row() -> str:
@@ -329,18 +335,21 @@ def _build_full_dashboard(state: TuiState, content_w: int) -> list[str]:
     projects = project_list()
     for i, name in enumerate(projects, 1):
         branch, commit_time, is_dirty = _project_detail(name)
-        # Truncate long project names
-        disp_name = name if len(name) <= 28 else name[:27] + "\u2026"
+        # Escape user-controlled strings to prevent Rich markup injection
+        safe_name = _escape_markup(name)
+        disp_name = safe_name if len(safe_name) <= 28 else safe_name[:27] + "\u2026"
         parts: list[str] = []
         if branch:
-            disp_branch = branch if len(branch) <= 20 else branch[:19] + "\u2026"
+            safe_branch = _escape_markup(branch)
+            disp_branch = safe_branch if len(safe_branch) <= 20 else safe_branch[:19] + "\u2026"
             branch_str = f"[{DIM}]{disp_branch}[/{DIM}]"
             if is_dirty:
                 parts.append(f"{branch_str} [{WARNING}]*[/{WARNING}]")
             else:
                 parts.append(f"{branch_str} [{SUCCESS}]{_CHECK}[/{SUCCESS}]")
         if commit_time:
-            parts.append(f"[{DIM}]{commit_time}[/{DIM}]")
+            safe_time = _escape_markup(commit_time)
+            parts.append(f"[{DIM}]{safe_time}[/{DIM}]")
         detail = "  ".join(parts) if parts else f"[{DIM}]local[/{DIM}]"
         lines.append(f"  [{PRIMARY}]{i}[/{PRIMARY}]  {disp_name}  {detail}")
 
@@ -443,7 +452,7 @@ def _print_project_screen(state: TuiState) -> None:
         return
 
     pad = content_pad()
-    name = project.name
+    name = _escape_markup(project.name)
 
     console.print()
     console.print(f"{pad}[bold {PRIMARY}]{name}[/bold {PRIMARY}]", highlight=False)
@@ -457,13 +466,17 @@ def _print_project_screen(state: TuiState) -> None:
     if gi:
         branch_color = WARNING if gi.is_dirty else SUCCESS
         dirty_mark = f" [{WARNING}]*[/{WARNING}]" if gi.is_dirty else ""
+        safe_branch = _escape_markup(gi.branch)
+        safe_hash = _escape_markup(gi.short_hash)
         console.print(
-            f"{pad}  [{branch_color}]{gi.branch}[/{branch_color}]{dirty_mark}  [{DIM}]{gi.short_hash}[/{DIM}]",
+            f"{pad}  [{branch_color}]{safe_branch}[/{branch_color}]{dirty_mark}  [{DIM}]{safe_hash}[/{DIM}]",
             highlight=False,
         )
         if gi.commit_message:
+            safe_msg = _escape_markup(gi.commit_message)
+            safe_time = _escape_markup(gi.commit_time)
             console.print(
-                f"{pad}  [{DIM}]{gi.commit_message}  {_DOT}  {gi.commit_time}[/{DIM}]",
+                f"{pad}  [{DIM}]{safe_msg}  {_DOT}  {safe_time}[/{DIM}]",
                 highlight=False,
             )
     else:
@@ -544,7 +557,7 @@ def print_header(state: TuiState, full: bool = True) -> None:
         w = _adaptive_width() - 6
         parts: list[str] = []
         if state.active_project:
-            name = state.active_project.name
+            name = _escape_markup(state.active_project.name)
             parts.append(f"[bold]{name}[/bold]")
             gi = _git_info_short(state.active_project)
             if gi:
@@ -585,7 +598,9 @@ def build_prompt(state: TuiState, wizard_step: tuple[int, int, str] | None = Non
         return f"{pad}<style fg='yellow'>[{cur}/{total}]</style> {label} &gt; "
 
     if state.active_project:
-        name = state.active_project.name
+        import html
+
+        name = html.escape(state.active_project.name)
         return f"{pad}<b><style fg='ansicyan'>{name}</style></b> &gt; "
 
     return f"{pad}<b>&gt;</b> "

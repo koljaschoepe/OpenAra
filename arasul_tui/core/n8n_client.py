@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shlex
 import socket
@@ -212,17 +213,24 @@ def n8n_get_api_key() -> str | None:
         import yaml
 
         cfg = yaml.safe_load(N8N_CONFIG.read_text())
-        return cfg.get("api_key") if cfg else None
+        val = cfg.get("api_key") if cfg else None
+        return str(val) if val is not None else None
     except Exception:
         # Fallback: simple key=value parsing
-        for line in N8N_CONFIG.read_text().splitlines():
-            if line.startswith("api_key:"):
-                return line.split(":", 1)[1].strip().strip("\"'")
+        try:
+            for line in N8N_CONFIG.read_text().splitlines():
+                if line.startswith("api_key:"):
+                    return line.split(":", 1)[1].strip().strip("\"'")
+        except OSError:
+            return None
     return None
 
 
 def n8n_save_api_key(key: str) -> None:
-    """Save API key to config file."""
+    """Save API key to config file (atomic write)."""
+    import os
+    import tempfile
+
     N8N_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     try:
         import yaml
@@ -231,11 +239,21 @@ def n8n_save_api_key(key: str) -> None:
         if N8N_CONFIG.exists():
             cfg = yaml.safe_load(N8N_CONFIG.read_text()) or {}
         cfg["api_key"] = key
-        N8N_CONFIG.write_text(yaml.dump(cfg, default_flow_style=False))
+        content = yaml.safe_dump(cfg, default_flow_style=False)
     except ImportError:
-        # Fallback without yaml
-        N8N_CONFIG.write_text(f"api_key: {key}\n")
-    N8N_CONFIG.chmod(0o600)
+        content = f"api_key: {key}\n"
+
+    # Atomic write: temp file + rename
+    fd, tmp_path = tempfile.mkstemp(dir=str(N8N_CONFIG.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, str(N8N_CONFIG))
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def n8n_compose_cmd(subcmd: str) -> str:

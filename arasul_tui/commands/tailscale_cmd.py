@@ -144,25 +144,50 @@ def _do_up() -> CommandResult:
     print_info("Starting Tailscale authentication...")
     console.print()
 
-    output = run_cmd("sudo tailscale up 2>&1", timeout=30)
+    # tailscale up blocks until the user authenticates via a URL.
+    # We run it in the background and poll for the auth URL or connection.
+    import subprocess
+    import time
 
-    # Check if auth URL is in output
-    if "https://" in output:
-        for line in output.splitlines():
-            line = line.strip()
-            if line.startswith("https://"):
-                console.print(f"{pad}[bold cyan]{line}[/bold cyan]", highlight=False)
-                break
+    proc = subprocess.Popen(
+        ["sudo", "tailscale", "up"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
+    )
+
+    auth_url = None
+    # Poll for up to 10 seconds to capture the auth URL from stdout
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        import select
+
+        ready, _, _ = select.select([proc.stdout], [], [], 0.5)
+        if ready:
+            line = proc.stdout.readline()
+            if line and "https://" in line:
+                for part in line.split():
+                    if part.startswith("https://"):
+                        auth_url = part
+                        break
+                if auth_url:
+                    break
+
+    if auth_url:
+        console.print(f"{pad}[bold cyan]{auth_url}[/bold cyan]", highlight=False)
         console.print()
         print_info("Open this URL in your browser to authenticate.")
-        print_info("Then type [bold]tailscale[/bold] to check status.")
+        print_info("Then type [bold]/tailscale[/bold] to check status.")
+        # Don't wait for the process — it will complete when user authenticates
     elif _is_connected():
         ip = run_cmd("tailscale ip -4 2>/dev/null", timeout=5).strip()
         print_success(f"Connected: [bold]{ip}[/bold]")
     else:
         print_warning("Tailscale started but may need authentication.")
-        if output:
-            console.print(f"{pad}[dim]{output[:200]}[/dim]", highlight=False)
+        print_info("Run [bold]sudo tailscale up[/bold] in a terminal to see the auth URL.")
 
     return CommandResult(ok=True, style="silent")
 

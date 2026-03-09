@@ -48,23 +48,33 @@ def get_git_info(project: Path) -> GitInfo | None:
     if not (project / ".git").exists():
         return None
 
+    def _clean(val: str) -> str:
+        """Strip run_cmd error strings so they don't leak into UI."""
+        return "" if val.startswith("Error") else val
+
     q = shlex.quote(str(project))
-    branch = run_cmd(f"git -C {q} symbolic-ref --short HEAD 2>/dev/null")
+    branch = _clean(run_cmd(f"git -C {q} symbolic-ref --short HEAD 2>/dev/null"))
+    # Detached HEAD: symbolic-ref fails, fall back to short commit hash
+    if not branch:
+        branch = _clean(run_cmd(f"git -C {q} rev-parse --short HEAD 2>/dev/null"))
+        if branch:
+            branch = f"({branch})"  # indicate detached HEAD
+
     dirty_out = run_cmd(f"git -C {q} status --porcelain 2>/dev/null")
     is_dirty = bool(dirty_out and not dirty_out.startswith("Error"))
-    short_hash = run_cmd(f"git -C {q} log -1 --format=%h 2>/dev/null") or ""
-    commit_msg = run_cmd(f"git -C {q} log -1 --format=%s 2>/dev/null") or ""
-    commit_time = run_cmd(f"git -C {q} log -1 --format=%cr 2>/dev/null") or ""
-    remote_url = run_cmd(f"git -C {q} remote get-url origin 2>/dev/null") or ""
+    short_hash = _clean(run_cmd(f"git -C {q} log -1 --format=%h 2>/dev/null"))
+    commit_msg = _clean(run_cmd(f"git -C {q} log -1 --format=%s 2>/dev/null"))
+    commit_time = _clean(run_cmd(f"git -C {q} log -1 --format=%cr 2>/dev/null"))
+    remote_url = _clean(run_cmd(f"git -C {q} remote get-url origin 2>/dev/null"))
 
     return GitInfo(
-        branch=branch or "",
+        branch=branch,
         is_dirty=is_dirty,
         short_hash=short_hash,
         commit_message=commit_msg[:60],
         commit_time=commit_time,
         remote_url=remote_url,
-        has_remote=bool(remote_url and not remote_url.startswith("Error")),
+        has_remote=bool(remote_url),
     )
 
 
@@ -145,7 +155,7 @@ def get_readme_headline(project: Path) -> str:
 
 def get_disk_usage(project: Path) -> str:
     """Return human-readable disk usage of a directory."""
-    result = run_cmd(f"du -sh {shlex.quote(str(project))} 2>/dev/null")
+    result = run_cmd(f"du -sh {shlex.quote(str(project))} 2>/dev/null", timeout=5)
     if result and not result.startswith("Error"):
         return result.split()[0]
     return ""

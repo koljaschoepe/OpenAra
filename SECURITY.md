@@ -4,7 +4,7 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.5.x   | :white_check_mark: |
+| latest  | :white_check_mark: |
 | < 0.5   | :x:                |
 
 ## Reporting a Vulnerability
@@ -30,7 +30,7 @@ This project implements the following security measures on the target device:
 - **Automatic Updates**: Security patches via `unattended-upgrades` (Docker/NVIDIA excluded)
 - **Network Hardening**: SYN cookies, reverse-path filtering, ICMP redirect rejection
 - **OOM Protection**: SSH and Docker services protected from OOM killer
-- **Subprocess Safety**: All shell calls in the TUI use `shlex.quote()` for input sanitization
+- **Subprocess Safety**: User-supplied inputs in TUI shell calls are sanitized with `shlex.quote()`
 
 ## Scope
 

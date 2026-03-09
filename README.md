@@ -9,7 +9,7 @@
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-One command turns a Raspberry Pi or Jetson into a secure, always-on dev server.<br>An interactive TUI lets you create projects, launch Claude Code, and manage everything from your terminal.
+One command turns a Raspberry Pi or Jetson into a secure, always-on dev server.<br>The `arasul` TUI lets you create projects, launch Claude Code, and manage everything from your terminal.
 
 [Quick Start](#quick-start) · [Features](#what-you-get) · [TUI Commands](#arasul-tui) · [Platforms](#platform-support)
 
@@ -35,13 +35,21 @@ Built for solo developers, AI researchers, and anyone who wants their own machin
 |----------|--------|---------|-----|--------|
 | **NVIDIA Jetson** | Orin Nano/NX/AGX, Xavier, TX2 | NVMe, USB-SSD, SD | CUDA | Full support |
 | **Raspberry Pi** | Pi 4 (4GB+), Pi 5 | NVMe (M.2 HAT+), USB-SSD, SD | — | Full support |
-| **Generic Linux** | Any aarch64 / x86_64 | Auto-detected | — | Basic support |
+| **Generic Linux** | Any aarch64 / x86_64 (Debian/Ubuntu-based) | Auto-detected | — | Basic support |
 
 Hardware is auto-detected — OpenAra adapts to your platform automatically.
 
 ## Quick Start
 
-**Prerequisites:** Raspberry Pi 4/5 or NVIDIA Jetson with a fresh OS, network connection, and an [SSH key](docs/ssh-setup.md) on your workstation. New to this? See the [Hardware Setup Guide](docs/hardware-setup.md) for flashing your OS and installing storage.
+| I have... | Start here |
+|-----------|-----------|
+| Raspberry Pi 4/5 (fresh) | [Hardware Setup](docs/hardware-setup.md) → then come back here |
+| Jetson Orin/Xavier (fresh) | [Hardware Setup](docs/hardware-setup.md) → then come back here |
+| Any Linux with SSH access | Jump straight to the install below |
+
+**Prerequisites:** Fresh OS, network connection, and an [SSH key](docs/ssh-setup.md) on your workstation.
+
+> **Claude Code** requires an [Anthropic Max plan](https://www.anthropic.com/pricing) ($100/mo) or an [API key](https://console.anthropic.com/). OpenAra installs the CLI — you authenticate on first launch via `/auth` in the TUI.
 
 ```bash
 # On the device (via SSH):
@@ -74,12 +82,14 @@ The setup wizard detects your hardware, asks 3 questions, shows an installation 
   Proceed? [Y/n/customize]:
 ```
 
-After reboot:
+After reboot, connect from your workstation using the hostname you chose during setup:
 
 ```bash
-ssh dev.local
-arasul          # Start the management TUI
+ssh <user>@<hostname>.local    # e.g. ssh pi@dev.local
+arasul                         # Start the management TUI
 ```
+
+> **Tip:** Set up an [SSH alias](docs/ssh-setup.md) so you can just type `ssh dev` instead of the full address.
 
 ## What You Get
 
@@ -124,12 +134,14 @@ arasul          # launch (or alias: atui)
 | **System** | `/status`, `/health`, `/setup`, `/docker` |
 | **Security** | `/keys`, `/logins`, `/security` |
 | **Browser** | `/browser` (smart flow: status → install → test → MCP) |
-| **MCP** | `/mcp list\|add\|test\|remove` |
+| **MCP** | `/mcp list`, `/mcp add`, `/mcp test`, `/mcp remove` |
 | **Services** | `/n8n` (smart flow: install → start → API key → MCP), `/n8n stop` |
-| **Network** | `/tailscale status\|install\|up\|down`, `/expose on\|off\|status` |
+| **Network** | `/tailscale status`, `/tailscale install`, `/tailscale up`, `/tailscale down`, `/expose on`, `/expose off`, `/expose status` |
 | **Meta** | `/help`, `/exit`, `/welcome` |
 
 Keyboard shortcuts: `1-9` select project, `n` new, `d` delete, `c` Claude, `g` lazygit, `b` back.
+
+> **Smart Flow:** Commands like `/browser` and `/n8n` detect what's already installed and guide you through the remaining steps automatically.
 
 ### Project Templates
 
@@ -146,14 +158,14 @@ Create projects with pre-configured conda environments:
 ## Daily Workflow
 
 ```bash
-ssh mydevice                    # Connect — TUI starts automatically
+ssh dev                         # Connect via SSH alias — TUI starts automatically
 3                               # Select project by number
 c                               # Launch Claude Code in that project
 ```
 
-That's it. The Arasul TUI starts on every SSH login, shows your projects, and launches Claude Code in the right directory. Your server is always on, your projects persist, and Claude picks up right where you left off.
+`dev` is the SSH alias you set up in `~/.ssh/config` (see [SSH setup guide](docs/ssh-setup.md)). The Arasul TUI starts on every SSH login, shows your projects, and launches Claude Code in the right directory. Your server is always on, your projects persist, and Claude picks up right where you left off.
 
-> **Tip:** For persistent sessions that survive SSH disconnects, use `t` after exiting the TUI to start a tmux session.
+> **Tip:** For persistent sessions that survive SSH disconnects, type `t` (a shell alias for `tmux attach -t dev || tmux new -s dev`) after exiting the TUI.
 
 ## Setup Options
 
@@ -220,7 +232,7 @@ Only `CUSTOMER_NAME` and `DEVICE_USER` are required — everything else is auto-
 │   ├── app.py                  # Entry point
 │   ├── commands/               # 11 command modules
 │   └── core/                   # Platform, state, registry, UI
-├── tests/                      # 501 tests, 70% coverage
+├── tests/                      # 536 tests, 76% coverage
 ├── scripts/
 │   ├── 01-system-optimize.sh
 │   ├── 02-network-setup.sh
@@ -233,6 +245,10 @@ Only `CUSTOMER_NAME` and `DEVICE_USER` are required — everything else is auto-
 │   ├── 09-n8n-setup.sh
 │   └── 10-miniforge-setup.sh
 ├── config/                     # tmux, aliases, MOTD, SSH template
+│   ├── aliases/                # Platform-specific shell aliases
+│   ├── n8n/                    # n8n Docker Compose stack
+│   ├── templates/              # Project CLAUDE.md templates
+│   └── project-docs/           # Per-template documentation
 └── .github/workflows/          # CI, CodeQL, Release automation
 ```
 
@@ -287,7 +303,7 @@ rm -rf ~/.config/arasul
 </details>
 
 <details>
-<summary><strong>Migrating from Jetson-Only Setup</strong></summary>
+<summary><strong>Upgrading from v0.4.x or Earlier (existing users only)</strong></summary>
 
 If you used an earlier version with `JETSON_*` variables:
 

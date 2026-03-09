@@ -102,7 +102,8 @@ def _smart_flow() -> CommandResult:
         repo_root = Path(__file__).parent.parent.parent
         setup_script = repo_root / "scripts" / "08-browser-setup.sh"
         if not setup_script.exists():
-            print_error(f"Setup script not found: {setup_script}")
+            print_error("Setup script not found.")
+            print_info("Run manually: [bold]sudo ./setup.sh --step 8[/bold]")
             return CommandResult(ok=False, style="silent")
 
         from arasul_tui.core.platform import get_platform
@@ -119,7 +120,7 @@ def _smart_flow() -> CommandResult:
         console.print()
         try:
             ok, output = run_install_animated(
-                f"sudo {env_vars} bash {shlex.quote(str(setup_script))} 2>&1",
+                f"sudo env {env_vars} bash {shlex.quote(str(setup_script))} 2>&1",
                 title="Browser Setup",
                 steps=_steps(),
                 check_milestone=_check_milestone,

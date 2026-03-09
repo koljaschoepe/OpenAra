@@ -131,7 +131,7 @@ def _show_status() -> CommandResult:
     # Workflows (only if API key is set and n8n is running)
     if api_key and api == "healthy":
         workflows = n8n_list_workflows()
-        active = sum(1 for w in workflows if w.get("active"))
+        active = sum(1 for w in workflows if isinstance(w, dict) and w.get("active"))
         rows.append(("Workflows", f"{len(workflows)} total, {active} active"))
 
     # MCP server
@@ -179,7 +179,8 @@ def _smart_flow(state: TuiState) -> CommandResult:
         repo_root = Path(__file__).parent.parent.parent
         setup_script = repo_root / "scripts" / "09-n8n-setup.sh"
         if not setup_script.exists():
-            print_error(f"Setup script not found: {setup_script}")
+            print_error("Setup script not found.")
+            print_info("Run manually: [bold]sudo ./setup.sh --step 9[/bold]")
             return CommandResult(ok=False, style="silent")
 
         # The script needs STORAGE_MOUNT, REAL_USER, and SCRIPT_DIR
@@ -197,7 +198,7 @@ def _smart_flow(state: TuiState) -> CommandResult:
         console.print()
         try:
             ok, output = run_install_animated(
-                f"sudo {env_vars} bash {shlex.quote(str(setup_script))} 2>&1",
+                f"sudo env {env_vars} bash {shlex.quote(str(setup_script))} 2>&1",
                 title="n8n Setup",
                 steps=_steps(),
                 check_milestone=_check_milestone,
@@ -226,9 +227,18 @@ def _smart_flow(state: TuiState) -> CommandResult:
 
         spinner_run("Starting n8n...", _run_start)
 
+        # Wait for containers to reach "running" state (up to 15s)
+        import time
+
+        for _ in range(15):
+            if n8n_is_running():
+                break
+            time.sleep(1)
+
         if not n8n_is_running():
             print_error("n8n failed to start.")
-            print_info("Check logs: [bold]docker compose -f ~/n8n/docker-compose.yml logs[/bold]")
+            d = n8n_dir()
+            print_info(f"Check logs: [bold]docker compose -f {d}/docker-compose.yml logs[/bold]")
             return CommandResult(ok=False, style="silent")
 
         print_success(f"n8n started at [bold]{N8N_BASE_URL}[/bold]")
@@ -240,7 +250,7 @@ def _smart_flow(state: TuiState) -> CommandResult:
         import socket
 
         hostname = socket.gethostname()
-        print_info("From your Mac:")
+        print_info("From your workstation:")
         print_info(f"  [bold]ssh -L 5678:localhost:5678 {hostname}[/bold]")
         print_info(f"Then open [bold cyan]{N8N_BASE_URL}/settings/api[/bold cyan]")
         print_info("and create an API key.")
@@ -354,6 +364,10 @@ def _do_stop() -> CommandResult:
         return n8n_compose_cmd("down")
 
     spinner_run("Stopping n8n...", _run_stop)
+
+    if n8n_is_running():
+        print_warning("n8n may still be running. Check with [bold]docker ps[/bold].")
+        return CommandResult(ok=False, style="silent")
     print_success("n8n stopped.")
     return CommandResult(ok=True, style="silent")
 

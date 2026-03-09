@@ -9,13 +9,10 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 PRIMARY = "cyan"  # Main accent — logo, prompts, active items
-SECONDARY = "#5870ff"  # Links, branches, secondary info
-ACCENT = "#ff6b9d"  # Attention, special highlights
 SUCCESS = "green"  # Checkmarks, clean status, success messages
 WARNING = "yellow"  # Warnings, dirty status, caution
 ERROR = "red"  # Errors, failures, critical
 DIM = "dim"  # Muted text, timestamps, paths
-GLOW = "#66eeff"  # Logo glow highlight (bright cyan)
 
 # Bar characters (modern block style)
 BAR_FILLED = "\u25b0"  # ▰
@@ -28,7 +25,6 @@ ICON_FAIL = f"[{ERROR}]\u2717[/{ERROR}]"  # ✗
 ICON_ARROW = f"[{PRIMARY}]\u2192[/{PRIMARY}]"  # →
 ICON_DOT_ON = f"[{SUCCESS}]\u25cf[/{SUCCESS}]"  # ●
 ICON_DOT_OFF = f"[{DIM}]\u25cb[/{DIM}]"  # ○
-ICON_BULLET = f"[{PRIMARY}]\u203a[/{PRIMARY}]"  # ›
 
 # Logo gradient — top to bottom (7 lines)
 LOGO_GRADIENT = [

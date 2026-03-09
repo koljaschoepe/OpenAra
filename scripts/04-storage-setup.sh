@@ -17,6 +17,9 @@ source "$(dirname "$0")/../lib/detect.sh"
 REAL_USER="${REAL_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-$USER}")}"
 REAL_HOME="${REAL_HOME:-$(get_real_home)}"
 
+check_root
+export DEBIAN_FRONTEND=noninteractive
+
 # ---------------------------------------------------------------------------
 # Swap sizing based on detected RAM
 # ---------------------------------------------------------------------------
@@ -42,11 +45,11 @@ setup_swap_ram_based() {
         local ram_mb
         ram_mb=$(detect_ram_mb 2>/dev/null || echo 0)
         if (( ram_mb <= 2048 )); then
-            swap_size="4G"
+            swap_size="2G"
         elif (( ram_mb <= 4096 )); then
-            swap_size="8G"
+            swap_size="4G"
         elif (( ram_mb <= 8192 )); then
-            swap_size="16G"
+            swap_size="8G"
         else
             swap_size="16G"
         fi
@@ -62,7 +65,9 @@ setup_swap_ram_based() {
         log "Creating ${swap_size} swap on ${mode} storage..."
 
         # Disable zram swap if present (Jetson default)
-        systemctl disable nvzramconfig 2>/dev/null || true
+        if [[ "${PLATFORM:-}" == "jetson" ]]; then
+            systemctl disable nvzramconfig 2>/dev/null || true
+        fi
 
         # Create new swap FIRST (before disabling old — prevents OOM on 4GB devices)
         # fallocate is fastest but fails on some filesystems (Btrfs, XFS with reflink)
@@ -146,6 +151,15 @@ if ! lsblk "$STORAGE_DEVICE" &>/dev/null; then
     exit 1
 fi
 
+# Ensure partitioning tools are available
+for tool in parted mkfs.ext4 blkid; do
+    if ! command -v "$tool" &>/dev/null; then
+        log "Installing missing tool: ${tool}"
+        apt-get install -y -qq parted e2fsprogs util-linux 2>/dev/null || true
+        break
+    fi
+done
+
 DEVICE_SIZE=$(lsblk -b -d -n -o SIZE "$STORAGE_DEVICE" | head -1)
 DEVICE_SIZE_GB=$(( DEVICE_SIZE / 1073741824 ))
 log "${STORAGE_TYPE^^} detected: ${DEVICE_SIZE_GB} GB at ${STORAGE_DEVICE}"
@@ -153,8 +167,9 @@ log "${STORAGE_TYPE^^} detected: ${DEVICE_SIZE_GB} GB at ${STORAGE_DEVICE}"
 # ---------------------------------------------------------------------------
 # Determine partition path
 # ---------------------------------------------------------------------------
-# NVMe uses "p1" suffix (e.g. /dev/nvme0n1p1), others use "1" (e.g. /dev/sda1)
-if [[ "$STORAGE_DEVICE" == /dev/nvme* ]]; then
+# NVMe and eMMC use "p1" suffix (e.g. /dev/nvme0n1p1, /dev/mmcblk0p1),
+# others use "1" (e.g. /dev/sda1)
+if [[ "$STORAGE_DEVICE" == /dev/nvme* ]] || [[ "$STORAGE_DEVICE" == /dev/mmcblk* ]]; then
     STORAGE_PART="${STORAGE_DEVICE}p1"
 else
     STORAGE_PART="${STORAGE_DEVICE}1"
@@ -172,6 +187,15 @@ fi
 # Partition and format
 # ---------------------------------------------------------------------------
 if ! lsblk -f "$STORAGE_PART" &>/dev/null; then
+    # Safety: refuse to wipe a device that already has other partitions
+    existing_parts=$(lsblk -n -o NAME "$STORAGE_DEVICE" 2>/dev/null | tail -n +2 | sed 's/^[[:space:]]*//')
+    if [[ -n "$existing_parts" ]]; then
+        err "Device ${STORAGE_DEVICE} has existing partitions but ${STORAGE_PART} was not found:"
+        lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT "$STORAGE_DEVICE" >&2
+        err "Refusing to auto-partition — manual intervention required"
+        exit 1
+    fi
+
     warn "Partitioning ${STORAGE_DEVICE} — ALL DATA WILL BE ERASED"
     if [[ "${AUTO_CONFIRM:-false}" != "true" ]]; then
         read -rp "Type 'YES' to confirm: " confirm
@@ -187,9 +211,8 @@ if ! lsblk -f "$STORAGE_PART" &>/dev/null; then
     parted -s "$STORAGE_DEVICE" mklabel gpt
     parted -s "$STORAGE_DEVICE" mkpart primary ext4 0% 100%
 
-    sleep 2
     partprobe "$STORAGE_DEVICE"
-    sleep 1
+    udevadm settle --timeout=10
 
     FS_LABEL="arasul-data"
     mkfs.ext4 -L "$FS_LABEL" "$STORAGE_PART"
@@ -217,7 +240,14 @@ else
 fi
 
 # fstab entry (UUID-based for stability)
-STORAGE_UUID=$(blkid -s UUID -o value "$STORAGE_PART")
+# Retry blkid a few times — filesystem may not be immediately visible after mkfs
+STORAGE_UUID=""
+for _ in 1 2 3; do
+    STORAGE_UUID=$(blkid -s UUID -o value "$STORAGE_PART" 2>/dev/null || true)
+    [[ -n "$STORAGE_UUID" ]] && break
+    udevadm settle --timeout=5 2>/dev/null || true
+    sleep 1
+done
 if [[ -z "$STORAGE_UUID" ]]; then
     err "Cannot determine filesystem UUID for ${STORAGE_PART}"
     exit 1

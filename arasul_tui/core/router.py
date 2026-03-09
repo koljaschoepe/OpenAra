@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shlex
 
+from rich.markup import escape as _escape
+
 from arasul_tui.commands import (
     cmd_auth,
     cmd_browser,
@@ -344,7 +346,7 @@ def run_command(state: TuiState, raw: str) -> CommandResult:
             hint = ", ".join(f"[bold]{p}[/bold]" for p in prefixes[:3])
             print_info(f"Did you mean: {hint}? [dim](Tab to complete)[/dim]")
         else:
-            print_warning(f"I don't know '[bold]{cmd}[/bold]'. Try [bold]help[/bold] for all commands.")
+            print_warning(f"I don't know '[bold]{_escape(cmd)}[/bold]'. Try [bold]help[/bold] for all commands.")
         return CommandResult(ok=False, style="silent")
 
     # Natural language: resolve via alias/fuzzy matching
@@ -353,5 +355,5 @@ def run_command(state: TuiState, raw: str) -> CommandResult:
         return spec.handler(state, args)
 
     # No match found
-    print_warning(f"Hmm, I don't know '[bold]{text}[/bold]'. Try [bold]help[/bold] to see what I can do.")
+    print_warning(f"Hmm, I don't know '[bold]{_escape(text)}[/bold]'. Try [bold]help[/bold] to see what I can do.")
     return CommandResult(ok=False, style="silent")
