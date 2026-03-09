@@ -308,4 +308,4 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 [Business Source License 1.1](LICENSE) — free for personal, internal, and non-commercial use. Converts to Apache 2.0 on 2030-03-09.
 
-For commercial licensing, contact [kolja@koljaschoepe.dev](mailto:kolja@koljaschoepe.dev).
+For commercial licensing, contact [info@arasul.de](mailto:info@arasul.de).

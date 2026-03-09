@@ -5,7 +5,7 @@ description = "Interactive TUI for managing headless Linux SBC development serve
 readme = "README.md"
 license = {text = "BUSL-1.1"}
 requires-python = ">=3.10"
-authors = [{name = "Kolja Schoepe", email = "kolja@koljaschoepe.dev"}]
+authors = [{name = "Kolja Schoepe", email = "info@arasul.de"}]
 keywords = ["jetson", "raspberry-pi", "sbc", "headless", "ssh", "development", "tui", "nvidia", "setup"]
 classifiers = [
     "Development Status :: 4 - Beta",
