@@ -7,6 +7,8 @@ from rich.markup import escape as _escape
 from arasul_tui.commands import (
     cmd_agent,
     cmd_auth,
+    cmd_commit,
+    cmd_explain,
     cmd_review,
     cmd_browser,
     cmd_claude,
@@ -114,6 +116,24 @@ def build_registry() -> CommandRegistry:
             "AI code review of git changes",
             category="Agent",
             aliases=["code review", "review changes", "review diff", "pr review"],
+        )
+    )
+    reg.register(
+        CommandSpec(
+            "commit",
+            cmd_commit,
+            "AI-generated commit message for staged changes",
+            category="Agent",
+            aliases=["git commit", "auto commit", "commit changes"],
+        )
+    )
+    reg.register(
+        CommandSpec(
+            "explain",
+            cmd_explain,
+            "Explain a file, module, or the project architecture",
+            category="Agent",
+            aliases=["what is", "explain code", "describe", "how does"],
         )
     )
 

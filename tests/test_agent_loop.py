@@ -521,3 +521,43 @@ async def test_session_budget_shared_across_turns(tmp_path):
         budget_after_second = session.budget.used
 
     assert budget_after_second > budget_after_first
+
+
+# ---------------------------------------------------------------------------
+# AgentSession — tools_override
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_tools_override_empty_passes_empty_list(tmp_path):
+    """tools_override=[] passes an empty tools list to the LLM (disables tool calling)."""
+    captured_tools: list = []
+
+    async def capture_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        captured_tools.append(tools)
+        return _text_response("feat: initial commit")
+
+    with patch("arasul_tui.agent.agent.chat", AsyncMock(side_effect=capture_chat)):
+        session = AgentSession(tmp_path, config=_config(), tools_override=[])
+        result = await session.run("Write a commit message")
+
+    assert result.text == "feat: initial commit"
+    assert captured_tools[0] == []  # empty list, not TOOL_DEFINITIONS
+
+
+@pytest.mark.asyncio
+async def test_session_tools_override_none_uses_tool_definitions(tmp_path):
+    """tools_override=None (default) passes TOOL_DEFINITIONS to the LLM."""
+    from arasul_tui.agent.tools import TOOL_DEFINITIONS
+
+    captured_tools: list = []
+
+    async def capture_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        captured_tools.append(tools)
+        return _text_response("Done")
+
+    with patch("arasul_tui.agent.agent.chat", AsyncMock(side_effect=capture_chat)):
+        session = AgentSession(tmp_path, config=_config())  # tools_override not set
+        await session.run("Do something")
+
+    assert captured_tools[0] == TOOL_DEFINITIONS

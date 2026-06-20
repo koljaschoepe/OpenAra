@@ -170,6 +170,7 @@ class AgentSession:
         callbacks: AgentCallbacks | None = None,
         approval: ApprovalCallback | None = None,
         system_override: str | None = None,
+        tools_override: list[dict] | None = None,
     ) -> None:
         self.project_path = project_path
         self.cfg = config or load_agent_config()
@@ -180,6 +181,7 @@ class AgentSession:
         self.messages: list[dict] = []
         self._last_hint: str = ""
         self._has_system_override = system_override is not None
+        self._tools: list[dict] | None = tools_override  # None → use TOOL_DEFINITIONS
 
         if system_override is not None:
             self.system = system_override + ("\n/no_think" if not self.cfg.think else "")
@@ -217,7 +219,7 @@ class AgentSession:
 
             # --- LLM call ---
             self.cb.llm_start()
-            response = await _call_llm(self.messages, self.system, self.cfg, self.cb)
+            response = await _call_llm(self.messages, self.system, self.cfg, self.cb, tools=self._tools)
 
             if response is None:
                 stopped_reason = "error"
@@ -292,13 +294,18 @@ async def _call_llm(
     system: str,
     cfg: AgentConfig,
     cb: AgentCallbacks,
+    tools: list[dict] | None = None,
 ) -> LLMResponse | None:
-    """Call LLM with one automatic prune-and-retry on context overflow."""
+    """Call LLM with one automatic prune-and-retry on context overflow.
+
+    tools=None uses TOOL_DEFINITIONS; tools=[] disables tool calling entirely.
+    """
+    _tools = tools if tools is not None else TOOL_DEFINITIONS
     try:
         return await chat(
             messages=messages,
             system=system,
-            tools=TOOL_DEFINITIONS,
+            tools=_tools,
             config=cfg,
             on_token=cb.text_token,
         )
@@ -309,7 +316,7 @@ async def _call_llm(
             return await chat(
                 messages=pruned,
                 system=system,
-                tools=TOOL_DEFINITIONS,
+                tools=_tools,
                 config=cfg,
                 on_token=cb.text_token,
             )

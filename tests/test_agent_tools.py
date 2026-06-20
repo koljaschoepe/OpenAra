@@ -681,3 +681,109 @@ def test_get_git_diff_truncates_large_diffs(tmp_path, monkeypatch):
     diff, truncated = agent_cmd._get_git_diff(tmp_path)
     assert truncated
     assert len(diff) == 5
+
+
+# ---------------------------------------------------------------------------
+# _get_staged_diff helper
+# ---------------------------------------------------------------------------
+
+
+def test_get_staged_diff_non_git_dir(tmp_path):
+    """Non-git directory returns (None, False)."""
+    from arasul_tui.commands.agent_cmd import _get_staged_diff
+
+    diff, truncated = _get_staged_diff(tmp_path)
+    assert diff is None
+    assert not truncated
+
+
+def test_get_staged_diff_nothing_staged(tmp_path):
+    """Git repo with no staged changes returns ('', False)."""
+    import subprocess
+    from arasul_tui.commands.agent_cmd import _get_staged_diff
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    # Unstaged change — should NOT appear in staged diff
+    (tmp_path / "f.py").write_text("x = 1\n")
+
+    diff, truncated = _get_staged_diff(tmp_path)
+    assert diff == ""
+    assert not truncated
+
+
+def test_get_staged_diff_returns_staged_changes(tmp_path):
+    """Staged changes are returned."""
+    import subprocess
+    from arasul_tui.commands.agent_cmd import _get_staged_diff
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    (tmp_path / "hello.py").write_text("x = 42\n")
+    subprocess.run(["git", "add", "hello.py"], cwd=tmp_path, capture_output=True)
+
+    diff, truncated = _get_staged_diff(tmp_path)
+    assert diff is not None and "hello.py" in diff
+    assert not truncated
+
+
+def test_get_staged_diff_truncates_large_diffs(tmp_path, monkeypatch):
+    """Staged diffs larger than _MAX_COMMIT_DIFF_CHARS are truncated."""
+    import subprocess
+    from arasul_tui.commands import agent_cmd
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    monkeypatch.setattr(agent_cmd, "_MAX_COMMIT_DIFF_CHARS", 5)
+    (tmp_path / "big.py").write_text("x = 99999\n")
+    subprocess.run(["git", "add", "big.py"], cwd=tmp_path, capture_output=True)
+
+    diff, truncated = agent_cmd._get_staged_diff(tmp_path)
+    assert truncated
+    assert len(diff) == 5
+
+
+# ---------------------------------------------------------------------------
+# _do_git_commit helper
+# ---------------------------------------------------------------------------
+
+
+def test_do_git_commit_success(tmp_path):
+    """Returns (True, output) on a successful commit."""
+    import subprocess
+    from arasul_tui.commands.agent_cmd import _do_git_commit
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+
+    (tmp_path / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "a.py"], cwd=tmp_path, capture_output=True)
+
+    ok, output = _do_git_commit(tmp_path, "feat: add a.py")
+    assert ok is True
+    assert "feat: add a.py" in output
+
+
+def test_do_git_commit_failure_nothing_to_commit(tmp_path):
+    """Returns (False, error_text) when there's nothing staged."""
+    import subprocess
+    from arasul_tui.commands.agent_cmd import _do_git_commit
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    ok, output = _do_git_commit(tmp_path, "feat: nothing here")
+    assert ok is False
+    assert output  # git returns some error/warning text

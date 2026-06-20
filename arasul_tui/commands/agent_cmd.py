@@ -48,6 +48,35 @@ You may call read_file to get more context around changed lines."""
 
 _MAX_REVIEW_DIFF_CHARS = 20_000  # ≈ 5000 tokens
 
+# ---------------------------------------------------------------------------
+# Commit + Explain system prompts
+# ---------------------------------------------------------------------------
+
+_COMMIT_SYSTEM = """\
+You are a git commit message writer. Given a staged diff, write a conventional commit message.
+
+Format:
+  type(scope): brief description    ← max 72 chars; scope is optional
+
+  Optional body explaining WHY in 1-3 sentences. Skip if the subject line
+  is already self-evident from the diff.
+
+Allowed types: feat · fix · refactor · test · docs · style · chore · perf
+Scope: the component or area affected (e.g. auth, api, ui, parser) — keep short.
+
+Output ONLY the commit message text. No markdown, no quotes, no explanation."""
+
+_MAX_COMMIT_DIFF_CHARS = 16_000
+
+_EXPLAIN_SYSTEM = """\
+You are Open Ara, a code explainer. Your job is to explain code clearly.
+
+- Explain WHAT and WHY, not how (the code already shows how).
+- Use plain language; be technical where precision matters.
+- Call read_file to inspect any file mentioned or implied by the request.
+- Keep explanations structured: purpose → design decisions → key components.
+- No code blocks unless the user explicitly asks for a code example."""
+
 
 def cmd_agent(state: TuiState, args: list[str]) -> CommandResult:
     """Start an interactive multi-turn agent session on the active project."""
@@ -60,6 +89,10 @@ def cmd_agent(state: TuiState, args: list[str]) -> CommandResult:
         return _cmd_agent_check()
     if args and args[0] == "review":
         return cmd_review(state, args[1:])
+    if args and args[0] == "commit":
+        return cmd_commit(state, args[1:])
+    if args and args[0] == "explain":
+        return cmd_explain(state, args[1:])
 
     if not state.active_project:
         print_warning("No active project.")
@@ -374,6 +407,232 @@ async def _run_review_async(
         system_override=_REVIEW_SYSTEM,
     )
     task = f"Review this diff:\n\n```diff\n{diff}\n```"
+    result = await session.run(task)
+    ui.print_footer(result)
+
+
+def _get_staged_diff(project_path: Path) -> tuple[str | None, bool]:
+    """Return (staged_diff, was_truncated). Returns (None, False) if not a git repo."""
+    import subprocess
+
+    if not (project_path / ".git").is_dir():
+        return None, False
+
+    try:
+        r = subprocess.run(
+            ["git", "diff", "--staged"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        diff = r.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return "", False
+
+    if not diff:
+        return "", False
+
+    truncated = len(diff) > _MAX_COMMIT_DIFF_CHARS
+    return diff[:_MAX_COMMIT_DIFF_CHARS], truncated
+
+
+# ---------------------------------------------------------------------------
+# /commit — AI-generated commit message
+# ---------------------------------------------------------------------------
+
+def cmd_commit(state: TuiState, args: list[str]) -> CommandResult:
+    """Generate a conventional commit message via AI and commit staged changes.
+
+    Usage:
+        commit          → analyse staged diff, propose message, ask for approval
+        agent commit    → same, as agent subcommand
+    """
+    if not state.active_project:
+        print_warning("No active project.")
+        return CommandResult(ok=False, style="silent")
+
+    project_path = state.active_project
+    staged_diff, truncated = _get_staged_diff(project_path)
+
+    if staged_diff is None:
+        print_info("Not a git repository.")
+        return CommandResult(ok=True, style="silent")
+    if not staged_diff:
+        print_info("Nothing staged. Run 'git add <files>' first.")
+        return CommandResult(ok=True, style="silent")
+
+    cfg = load_agent_config()
+    ui = ChatUI(project_path)
+    ui.print_header("Generate commit message")
+
+    if truncated:
+        pad = content_pad()
+        console.print(f"{pad}[{WARNING}]⚠  Diff truncated to {_MAX_COMMIT_DIFF_CHARS // 1000}k chars.[/{WARNING}]")
+        console.print()
+
+    try:
+        asyncio.run(_commit_flow_async(staged_diff, project_path, cfg, ui))
+    except KeyboardInterrupt:
+        console.print()
+        pad = content_pad()
+        console.print(f"{pad}[{DIM}]Commit cancelled.[/{DIM}]")
+
+    return CommandResult(ok=True, style="silent")
+
+
+async def _commit_flow_async(
+    staged_diff: str,
+    project_path: Path,
+    cfg: AgentConfig,
+    ui: ChatUI,
+) -> None:
+    pad = content_pad()
+    session = AgentSession(
+        project_path,
+        config=cfg,
+        callbacks=ui.make_callbacks(),
+        system_override=_COMMIT_SYSTEM,
+        tools_override=[],  # no tools — pure text generation
+    )
+    task = f"Write a commit message for this staged diff:\n\n```diff\n{staged_diff}\n```"
+    result = await session.run(task)
+
+    msg = result.text.strip() if result.text else ""
+    if not msg:
+        console.print(f"{pad}[{ERROR}]✗  Agent did not generate a commit message.[/{ERROR}]")
+        console.print()
+        return
+
+    final_msg = await _ask_commit_approval(msg)
+    if final_msg is None:
+        console.print(f"{pad}[{DIM}]Commit cancelled.[/{DIM}]")
+        console.print()
+        return
+
+    ok, output = _do_git_commit(project_path, final_msg)
+    console.print()
+    if ok:
+        for line in output.splitlines():
+            console.print(f"{pad}[{SUCCESS}]✓[/{SUCCESS}]  [{DIM}]{line}[/{DIM}]")
+    else:
+        console.print(f"{pad}[{ERROR}]✗  Commit failed:[/{ERROR}]")
+        for line in output.splitlines():
+            console.print(f"{pad}  [{DIM}]{line}[/{DIM}]")
+    console.print()
+
+
+async def _ask_commit_approval(msg: str) -> str | None:
+    """Display commit message and return approved/edited message, or None to cancel."""
+    pad = content_pad()
+    lines = msg.splitlines()
+
+    console.print()
+    console.print(f"{pad}[{DIM}]{'─' * 56}[/{DIM}]")
+    for i, line in enumerate(lines):
+        if i == 0 and line:
+            console.print(f"{pad}  [{PRIMARY}]{line}[/{PRIMARY}]")
+        else:
+            console.print(f"{pad}  [{DIM}]{line}[/{DIM}]")
+    console.print(f"{pad}[{DIM}]{'─' * 56}[/{DIM}]")
+    console.print()
+    console.print(
+        f"{pad}  [{WARNING}]Commit with this message?[/{WARNING}]"
+        f" [{DIM}]y[es] · e[dit] · N[o][/{DIM}]: ",
+        end="",
+    )
+
+    try:
+        answer = await asyncio.to_thread(_read_stdin_line)
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return None
+
+    key = answer.strip().lower()
+    if key in ("y", "yes"):
+        return msg
+    if key in ("e", "edit"):
+        console.print()
+        console.print(f"{pad}  New message [{DIM}](single line; empty = keep original)[/{DIM}]:")
+        console.print(f"{pad}  > ", end="")
+        try:
+            new_msg = await asyncio.to_thread(_read_stdin_line)
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            return msg
+        return new_msg.strip() or msg
+    return None
+
+
+def _read_stdin_line() -> str:
+    import sys
+    try:
+        return sys.stdin.readline().rstrip("\n")
+    except EOFError:
+        return ""
+
+
+def _do_git_commit(project_path: Path, message: str) -> tuple[bool, str]:
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return r.returncode == 0, (r.stdout + r.stderr).strip()
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return False, str(exc)
+
+
+# ---------------------------------------------------------------------------
+# /explain — explain a file, directory, or project architecture
+# ---------------------------------------------------------------------------
+
+def cmd_explain(state: TuiState, args: list[str]) -> CommandResult:
+    """Explain a file, directory, or the overall project architecture.
+
+    Usage:
+        explain                 → project overview: purpose, architecture, key components
+        explain auth.py         → what this file does and why
+        explain src/api/        → explain the module
+    """
+    if not state.active_project:
+        print_warning("No active project.")
+        return CommandResult(ok=False, style="silent")
+
+    project_path = state.active_project
+    target = " ".join(args).strip() if args else ""
+    label = target or "project architecture"
+    if target:
+        task = f"Explain {target}"
+    else:
+        task = "Give me an overview of this project — its purpose, architecture, and key components."
+
+    cfg = load_agent_config()
+    ui = ChatUI(project_path)
+    ui.print_header(f"Explain: {label}")
+
+    try:
+        asyncio.run(_run_explain_async(task, project_path, cfg, ui))
+    except KeyboardInterrupt:
+        console.print()
+        pad = content_pad()
+        console.print(f"{pad}[{DIM}]Interrupted.[/{DIM}]")
+
+    return CommandResult(ok=True, style="silent")
+
+
+async def _run_explain_async(task: str, project_path: Path, cfg: AgentConfig, ui: ChatUI) -> None:
+    session = AgentSession(
+        project_path,
+        config=cfg,
+        callbacks=ui.make_callbacks(),
+        approval=ui.ask_approval,
+        system_override=_EXPLAIN_SYSTEM,
+    )
     result = await session.run(task)
     ui.print_footer(result)
 
