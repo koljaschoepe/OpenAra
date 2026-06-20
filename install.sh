@@ -1,157 +1,209 @@
 #!/usr/bin/env bash
-# =============================================================================
-# OpenAra — Remote Install Script
-# =============================================================================
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/koljaschoepe/OpenAra/main/install.sh | bash
+# ============================================================
+# Open Ara — One-Command Client Install
 #
-# Or inspect first:
-#   curl -fsSL https://raw.githubusercontent.com/koljaschoepe/OpenAra/main/install.sh -o install.sh
-#   less install.sh
+# Usage (non-interactive, recommended for university IT):
+#   bash install.sh --server http://jetson.uni.de:11434/v1
+#   bash install.sh --server http://jetson.uni.de:11434/v1 --key SEAT-001
+#
+# SSH-Tunnel mode (when Ollama port is not directly exposed):
+#   bash install.sh --ssh user@jetson.uni.edu
+#   bash install.sh --ssh user@jetson.uni.edu --ollama 172.30.0.78:11434
+#
+# Interactive (prompts for everything):
 #   bash install.sh
 #
-# Options (via environment variables):
-#   OPENARA_VERSION=v0.5.0    Pin to a specific release (default: latest tag)
-#   OPENARA_DIR=/opt/openara  Install location (default: /opt/openara)
-#   OPENARA_AUTO=1            Skip wizard, use defaults (default: interactive)
-# =============================================================================
-
+# One-liner from GitHub:
+#   curl -sL https://raw.githubusercontent.com/koljaschoepe/OpenAra/main/install.sh | bash -s -- --server URL
+# ============================================================
 set -euo pipefail
 
-# Colors (if terminal supports them)
+# ── Colours ──────────────────────────────────────────────────
 if [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    BLUE='\033[0;34m'
-    DIM='\033[2m'
-    BOLD='\033[1m'
-    RESET='\033[0m'
+  BOLD="\033[1m"; DIM="\033[2m"; GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
 else
-    RED='' GREEN='' BLUE='' DIM='' BOLD='' RESET=''
+  BOLD=""; DIM=""; GREEN=""; YELLOW=""; RED=""; RESET=""
 fi
+ok()   { echo -e "  ${GREEN}✓${RESET}  $*"; }
+warn() { echo -e "  ${YELLOW}!${RESET}  $*"; }
+err()  { echo -e "  ${RED}✗${RESET}  $*"; }
+info() { echo -e "  ${DIM}$*${RESET}"; }
+h()    { echo -e "\n${BOLD}$*${RESET}"; }
 
-log()  { echo -e "${GREEN}[✓]${RESET} $*"; }
-info() { echo -e "${BLUE}[i]${RESET} $*"; }
-warn() { echo -e "${RED}[!]${RESET} $*"; }
-err()  { echo -e "${RED}[✗]${RESET} $*" >&2; }
+# ── Parse args ───────────────────────────────────────────────
+SERVER_URL=""
+SSH_HOST=""
+OLLAMA_HOST="172.30.0.78"
+OLLAMA_PORT=11434
+LICENSE_KEY=""
 
-# ---------------------------------------------------------------------------
-# Pre-flight checks
-# ---------------------------------------------------------------------------
-OPENARA_VERSION="${OPENARA_VERSION:-}"
-OPENARA_DIR="${OPENARA_DIR:-/opt/openara}"
-OPENARA_AUTO="${OPENARA_AUTO:-}"
-REPO_URL="https://github.com/koljaschoepe/OpenAra.git"
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --server|-s)  SERVER_URL="$2"; shift 2 ;;
+    --key|-k)     LICENSE_KEY="$2"; shift 2 ;;
+    --ssh)        SSH_HOST="$2"; shift 2 ;;
+    --ollama)     IFS=: read -r OLLAMA_HOST OLLAMA_PORT <<< "$2"; shift 2 ;;
+    -h|--help)    sed -n '3,13p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *)            err "Unknown option: $1"; exit 1 ;;
+  esac
+done
 
+# ── Header ───────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}  OpenAra Installer${RESET}"
-echo -e "${DIM}  Turn any Linux SBC into a headless development server${RESET}"
+echo -e "  ${BOLD}Open Ara${RESET} — local AI coding assistant"
 echo ""
 
-# Must be Linux
-if [[ "$(uname -s)" != "Linux" ]]; then
-    err "OpenAra requires Linux. Detected: $(uname -s)"
-    err "Run this script on your Jetson, Raspberry Pi, or Linux server."
+# ── Check Python ─────────────────────────────────────────────
+h "Checking requirements"
+if ! command -v python3 &>/dev/null; then
+  err "Python 3 not found. Install: https://python.org/downloads"
+  exit 1
+fi
+PY_MAJOR=$(python3 -c "import sys; print(sys.version_info.major)")
+PY_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
+PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+if [[ $PY_MAJOR -lt 3 || ($PY_MAJOR -eq 3 && $PY_MINOR -lt 10) ]]; then
+  err "Python 3.10+ required (found $PY_VER)"
+  exit 1
+fi
+ok "Python $PY_VER"
+
+# ── Install package ──────────────────────────────────────────
+h "Installing Open Ara"
+REPO="git+https://github.com/koljaschoepe/OpenAra.git"
+if python3 -m pip install -q "openara[agent] @ ${REPO}" 2>&1; then
+  ok "openara installed  (commands: ara · openara · arasul)"
+else
+  python3 -c "import arasul_tui" 2>/dev/null && ok "openara available (dev install)" || {
+    err "Install failed. Try: pip install 'openara[agent] @ ${REPO}'"
     exit 1
+  }
 fi
 
-# Must be root (or will need sudo for setup.sh)
-if [[ $EUID -ne 0 ]]; then
-    info "This script will use sudo for system setup."
-    if ! command -v sudo &>/dev/null; then
-        err "sudo is required. Please run as root or install sudo."
-        exit 1
-    fi
+# ── Interactive prompts (if args not provided) ───────────────
+if [[ -z "$SERVER_URL" && -z "$SSH_HOST" ]]; then
+  h "Server configuration"
+  echo ""
+  echo -e "  How is your Ollama server accessible?"
+  echo -e "  ${DIM}1${RESET}  Direct URL   ${DIM}http://hostname:11434/v1${RESET}"
+  echo -e "  ${DIM}2${RESET}  SSH tunnel   ${DIM}Ollama port not directly exposed${RESET}"
+  echo ""
+  read -rp "  Choice [1/2, default 1]: " CHOICE
+  case "${CHOICE:-1}" in
+    2)
+      echo ""
+      read -rp "  SSH host (e.g. user@jetson.uni.edu or arasul@arasul.tail746d9b.ts.net): " SSH_HOST
+      read -rp "  Ollama host:port inside server [${OLLAMA_HOST}:${OLLAMA_PORT}]: " SPEC
+      if [[ -n "$SPEC" ]]; then IFS=: read -r OLLAMA_HOST OLLAMA_PORT <<< "$SPEC"; fi
+      ;;
+    *)
+      echo ""
+      read -rp "  Ollama URL (e.g. http://jetson.local:11434/v1): " SERVER_URL
+      ;;
+  esac
+  echo ""
+  read -rp "  License key (optional — press Enter to skip): " LICENSE_KEY
 fi
 
-# Must have git
-if ! command -v git &>/dev/null; then
-    info "Installing git..."
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update -qq && sudo apt-get install -y -qq git
-    else
-        err "git is required. Please install git and try again."
-        exit 1
-    fi
-fi
-
-# Detect architecture
-ARCH=$(uname -m)
-if [[ "$ARCH" != "aarch64" && "$ARCH" != "x86_64" ]]; then
-    warn "Untested architecture: ${ARCH}. Proceeding anyway..."
-fi
-
-# ---------------------------------------------------------------------------
-# Determine version
-# ---------------------------------------------------------------------------
-if [[ -z "$OPENARA_VERSION" ]]; then
-    # Try to get latest tag from GitHub API
-    if command -v curl &>/dev/null; then
-        OPENARA_VERSION=$(curl -fsSL "https://api.github.com/repos/koljaschoepe/OpenAra/releases/latest" 2>/dev/null \
-            | grep '"tag_name"' | head -1 | cut -d'"' -f4) || true
-    fi
-    if [[ -z "$OPENARA_VERSION" ]]; then
-        OPENARA_VERSION="main"
-        info "Could not detect latest release, using main branch"
-    else
-        info "Latest release: ${OPENARA_VERSION}"
-    fi
+# ── Determine connection type & agent URL ────────────────────
+if [[ -n "$SSH_HOST" ]]; then
+  CONNECTION_TYPE="ssh"
+  AGENT_URL="http://localhost:${OLLAMA_PORT}/v1"
 else
-    info "Pinned version: ${OPENARA_VERSION}"
+  CONNECTION_TYPE="direct"
+  AGENT_URL="$SERVER_URL"
 fi
 
-# ---------------------------------------------------------------------------
-# Clone or update
-# ---------------------------------------------------------------------------
-_dir_owner() {
-    stat -c '%U' "$1" 2>/dev/null || stat -f '%Su' "$1" 2>/dev/null || echo "root"
+# ── Save config ──────────────────────────────────────────────
+h "Saving configuration"
+
+python3 - <<PYEOF
+import json, os, sys
+
+cfg_dir = os.path.expanduser("~/.config/arasul")
+os.makedirs(cfg_dir, exist_ok=True)
+cfg_file = os.path.join(cfg_dir, "config.json")
+
+try:
+    with open(cfg_file) as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+
+data.setdefault("agent", {})["base_url"] = "${AGENT_URL}"
+
+data["install"] = {
+    "connection_type": "${CONNECTION_TYPE}",
+    "ssh_host":        "${SSH_HOST}",
+    "ollama_host":     "${OLLAMA_HOST}",
+    "ollama_port":     int("${OLLAMA_PORT}"),
+    "license_key":     "${LICENSE_KEY}",
 }
 
-if [[ -d "${OPENARA_DIR}/.git" ]]; then
-    info "Existing installation found at ${OPENARA_DIR}"
-    info "Updating..."
-    cd "$OPENARA_DIR"
-    OWNER=$(_dir_owner "$OPENARA_DIR")
-    sudo -u "$OWNER" git fetch origin
-    if [[ "$OPENARA_VERSION" != "main" ]]; then
-        sudo -u "$OWNER" git checkout "$OPENARA_VERSION"
-    else
-        sudo -u "$OWNER" git pull origin main
-    fi
-    log "Updated to ${OPENARA_VERSION}"
-else
-    # If directory exists but is not a git repo (e.g., failed previous install), remove it
-    if [[ -d "$OPENARA_DIR" ]] && [[ -n "$(ls -A "$OPENARA_DIR" 2>/dev/null)" ]]; then
-        warn "Directory ${OPENARA_DIR} exists but is not a git repo — removing..."
-        sudo rm -rf "$OPENARA_DIR"
-    fi
+with open(cfg_file, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.chmod(cfg_file, 0o600)
 
-    info "Installing to ${OPENARA_DIR}..."
-    sudo mkdir -p "$(dirname "$OPENARA_DIR")"
+# Skip name-prompt onboarding (server already configured by IT)
+open(os.path.join(cfg_dir, ".onboarded"), "w").close()
+PYEOF
 
-    if [[ "$OPENARA_VERSION" != "main" ]]; then
-        sudo git clone --branch "$OPENARA_VERSION" --depth 1 "$REPO_URL" "$OPENARA_DIR"
-    else
-        sudo git clone --depth 1 "$REPO_URL" "$OPENARA_DIR"
-    fi
+ok "Config saved → ~/.config/arasul/config.json"
+[[ "$CONNECTION_TYPE" == "ssh" ]] && info "SSH tunnel: ${SSH_HOST} → ${OLLAMA_HOST}:${OLLAMA_PORT} (auto-started by ara)" \
+                                  || info "Direct:     ${AGENT_URL}"
+[[ -n "$LICENSE_KEY" ]] && info "License:    ${LICENSE_KEY}"
 
-    # Set ownership to the real user (not root)
-    REAL_USER="${SUDO_USER:-$(whoami)}"
-    sudo chown -R "${REAL_USER}:${REAL_USER}" "$OPENARA_DIR"
-    log "Cloned to ${OPENARA_DIR}"
+# ── Test connection ───────────────────────────────────────────
+h "Testing connection"
+
+if [[ "$CONNECTION_TYPE" == "ssh" ]]; then
+  echo -e "  ${DIM}Opening SSH tunnel ${SSH_HOST} → localhost:${OLLAMA_PORT}…${RESET}"
+  if ssh -f -N \
+       -o ExitOnForwardFailure=yes \
+       -o ConnectTimeout=10 \
+       -o StrictHostKeyChecking=accept-new \
+       -L "${OLLAMA_PORT}:${OLLAMA_HOST}:${OLLAMA_PORT}" \
+       "$SSH_HOST" 2>/dev/null; then
+    sleep 1  # wait for port to open
+    ok "SSH tunnel established"
+  else
+    warn "SSH tunnel failed — make sure your public key is on ${SSH_HOST}"
+    warn "Fix: ssh-copy-id ${SSH_HOST}    then re-run: bash install.sh --ssh ${SSH_HOST}"
+    echo ""
+    echo -e "  ${BOLD}Open Ara installed${RESET} — fix SSH access then run: ${BOLD}ara agent check${RESET}"
+    echo ""
+    exit 0
+  fi
 fi
 
-cd "$OPENARA_DIR"
+python3 - <<PYEOF
+import asyncio, sys
+async def main():
+    try:
+        from arasul_tui.agent.llm import check_connection
+        r = await check_connection("${AGENT_URL}", timeout=8.0)
+        if r["ok"]:
+            models = "  ·  ".join(r["models"][:4])
+            print(f"  \033[32m✓\033[0m  Connected ({r['latency_ms']}ms)")
+            print(f"     Models available: {models}")
+        else:
+            print(f"  \033[33m!\033[0m  {r['error']}", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"  \033[31m✗\033[0m  {e}", file=sys.stderr)
+        sys.exit(1)
+asyncio.run(main())
+PYEOF
+CONN_OK=$?
 
-# ---------------------------------------------------------------------------
-# Run setup
-# ---------------------------------------------------------------------------
+# ── Done ─────────────────────────────────────────────────────
 echo ""
-info "Starting setup..."
+echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
-
-if [[ -n "$OPENARA_AUTO" ]]; then
-    sudo ./setup.sh --auto
+if [[ $CONN_OK -eq 0 ]]; then
+  echo -e "  ${GREEN}${BOLD}Ready!${RESET}  Type ${BOLD}ara${RESET} in any project folder to start."
 else
-    sudo ./setup.sh
+  echo -e "  ${YELLOW}Installed${RESET} — run ${BOLD}ara agent check${RESET} once the server is reachable."
 fi
+echo ""

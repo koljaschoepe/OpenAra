@@ -1,12 +1,12 @@
 [project]
-name = "arasul"
+name = "openara"
 version = "0.7.0"
-description = "Interactive TUI for managing headless Linux SBC development servers (Jetson, Raspberry Pi, generic)"
+description = "Local AI coding assistant — TUI client for Ollama on Jetson/GPU servers (Claude Code replacement)"
 readme = "README.md"
 license = {text = "BUSL-1.1"}
 requires-python = ">=3.10"
 authors = [{name = "Kolja Schoepe", email = "info@arasul.de"}]
-keywords = ["jetson", "raspberry-pi", "sbc", "headless", "ssh", "development", "tui", "nvidia", "setup"]
+keywords = ["ai", "llm", "ollama", "tui", "coding-assistant", "jetson", "local-ai", "university", "air-gap", "claude-code"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

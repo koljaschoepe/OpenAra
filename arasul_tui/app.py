@@ -330,12 +330,38 @@ def _dispatch_command(state: TuiState, command: str) -> tuple:
     return None, None, False
 
 
+def _ensure_tunnel_if_configured() -> None:
+    """Auto-start SSH tunnel before TUI if install config says so."""
+    from arasul_tui.core.tunnel import ensure_ssh_tunnel, get_install_config
+
+    install = get_install_config()
+    if install.get("connection_type") != "ssh":
+        return
+
+    ssh_host = install.get("ssh_host", "")
+    ollama_host = install.get("ollama_host", "localhost")
+    ollama_port = int(install.get("ollama_port", 11434))
+
+    if not ssh_host:
+        return
+
+    ok, msg = ensure_ssh_tunnel(ssh_host, ollama_host, ollama_port)
+    pad = content_pad()
+    if ok:
+        console.print(f"{pad}[dim]⟳  {msg}[/dim]")
+    else:
+        console.print(f"{pad}[yellow]⚠  SSH tunnel failed: {msg}[/yellow]")
+        console.print(f"{pad}[dim]   Run: ara agent check[/dim]")
+
+
 def run() -> None:
     try:
         state = TuiState(registry=REGISTRY)
     except Exception as exc:
         print_error(f"Startup failed: {exc}")
         return
+
+    _ensure_tunnel_if_configured()
 
     pending_handler: PendingHandler | None = None
     wizard_step: tuple[int, int, str] | None = None
