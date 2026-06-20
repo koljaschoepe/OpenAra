@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from arasul_tui.agent.tools._base import ToolError
-from arasul_tui.agent.tools.file_tools import read_file, write_file
+from arasul_tui.agent.tools.file_tools import read_file, undo_file, write_file
 from arasul_tui.agent.tools.search_tools import list_files, search_files
 from arasul_tui.agent.tools.shell_tools import run_command
 
@@ -26,6 +26,7 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset({"write_file"})
 _REGISTRY: dict[str, Any] = {
     "read_file": read_file,
     "write_file": write_file,
+    "undo_file": undo_file,
     "run_command": run_command,
     "search_files": search_files,
     "list_files": list_files,
@@ -156,6 +157,27 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "undo_file",
+            "description": (
+                "Restore a file to its state before the last write_file call. "
+                "Use this when a write introduced a bug or the user asks to revert a change. "
+                "Can be called multiple times to step further back through the edit history."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path relative to project root of the file to restore",
+                    },
+                },
+                "required": ["path"],
             },
         },
     },

@@ -13,7 +13,7 @@ from arasul_tui.agent.tools import (
     requires_approval,
 )
 from arasul_tui.agent.tools._base import ToolError, safe_path
-from arasul_tui.agent.tools.file_tools import diff_for_approval, read_file, write_file
+from arasul_tui.agent.tools.file_tools import diff_for_approval, read_file, undo_file, write_file
 from arasul_tui.agent.tools.search_tools import list_files, search_files
 from arasul_tui.agent.tools.shell_tools import run_command
 
@@ -390,7 +390,7 @@ def test_requires_approval_mv_command():
 
 def test_tool_definitions_have_required_fields():
     names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
-    assert names == {"read_file", "write_file", "run_command", "search_files", "list_files"}
+    assert names == {"read_file", "write_file", "undo_file", "run_command", "search_files", "list_files"}
 
     for tool in TOOL_DEFINITIONS:
         assert tool["type"] == "function"
@@ -399,3 +399,141 @@ def test_tool_definitions_have_required_fields():
         assert "description" in fn
         assert "parameters" in fn
         assert fn["parameters"]["type"] == "object"
+
+
+# ---------------------------------------------------------------------------
+# write_file — backup on overwrite
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_file_creates_backup_on_overwrite(tmp_path):
+    """Overwriting an existing file must create a .openara-backups/ entry."""
+    target = tmp_path / "auth.py"
+    target.write_text("original content\n")
+
+    await write_file("auth.py", "new content\n", tmp_path)
+
+    backup_root = tmp_path / ".openara-backups" / "auth.py"
+    backups = list(backup_root.glob("*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text() == "original content\n"
+
+
+@pytest.mark.asyncio
+async def test_write_file_no_backup_on_create(tmp_path):
+    """Creating a new file must NOT create a backup (nothing to back up)."""
+    await write_file("new.py", "hello\n", tmp_path)
+    assert not (tmp_path / ".openara-backups").exists()
+
+
+@pytest.mark.asyncio
+async def test_write_file_backup_pruned_to_max(tmp_path):
+    """After 11+ overwrites, only the last 10 backups are kept."""
+    target = tmp_path / "f.py"
+    for i in range(12):
+        target.write_text(f"version {i}\n")
+        await write_file("f.py", f"version {i+1}\n", tmp_path)
+
+    backup_dir = tmp_path / ".openara-backups" / "f.py"
+    backups = list(backup_dir.glob("*.bak"))
+    assert len(backups) == 10
+
+
+# ---------------------------------------------------------------------------
+# undo_file
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_undo_file_restores_previous_version(tmp_path):
+    """undo_file restores the file to its pre-write content."""
+    (tmp_path / "auth.py").write_text("original\n")
+    await write_file("auth.py", "changed\n", tmp_path)
+
+    assert (tmp_path / "auth.py").read_text() == "changed\n"
+    await undo_file("auth.py", tmp_path)
+    assert (tmp_path / "auth.py").read_text() == "original\n"
+
+
+@pytest.mark.asyncio
+async def test_undo_file_multi_step(tmp_path):
+    """Calling undo_file twice steps back two versions."""
+    (tmp_path / "f.py").write_text("v1\n")
+    await write_file("f.py", "v2\n", tmp_path)
+    await write_file("f.py", "v3\n", tmp_path)
+
+    await undo_file("f.py", tmp_path)
+    assert (tmp_path / "f.py").read_text() == "v2\n"
+    await undo_file("f.py", tmp_path)
+    assert (tmp_path / "f.py").read_text() == "v1\n"
+
+
+@pytest.mark.asyncio
+async def test_undo_file_no_backup_returns_message(tmp_path):
+    """undo_file on a file with no backup returns a human-readable message."""
+    (tmp_path / "fresh.py").write_text("hello\n")
+    result = await undo_file("fresh.py", tmp_path)
+    assert "no backup" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_undo_not_requires_approval(tmp_path):
+    """undo_file should never require approval — it's a restoration."""
+    from arasul_tui.agent.tools import requires_approval
+    assert not requires_approval("undo_file", {"path": "auth.py"})
+
+
+# ---------------------------------------------------------------------------
+# on_llm_start callback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_llm_start_fired_before_each_llm_call(tmp_path):
+    """on_llm_start must be called once per LLM iteration."""
+    from unittest.mock import AsyncMock, patch
+    from arasul_tui.agent.agent import AgentCallbacks, AgentSession
+    from arasul_tui.agent.config import AgentConfig
+    from arasul_tui.agent.llm import LLMResponse, Usage
+
+    llm_starts: list[int] = []
+
+    cb = AgentCallbacks(on_llm_start=lambda: llm_starts.append(1))
+    cfg = AgentConfig(base_url="http://localhost:11434/v1", model="qwen3:14b")
+
+    async def mock_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        return LLMResponse(text="Done.", stop_reason="end_turn", usage=Usage(100, 50))
+
+    with patch("arasul_tui.agent.agent.chat", AsyncMock(side_effect=mock_chat)):
+        session = AgentSession(tmp_path, config=cfg, callbacks=cb)
+        await session.run("First task")
+        await session.run("Second task")
+
+    assert len(llm_starts) == 2  # one per turn (each single-iteration)
+
+
+@pytest.mark.asyncio
+async def test_think_false_adds_no_think_to_system(tmp_path):
+    """When think=False, system prompt must contain /no_think."""
+    from unittest.mock import AsyncMock, patch
+    from arasul_tui.agent.agent import AgentSession
+    from arasul_tui.agent.config import AgentConfig
+    from arasul_tui.agent.llm import LLMResponse, Usage
+
+    captured_systems: list[str] = []
+
+    async def mock_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        captured_systems.append(system)
+        return LLMResponse(text="Done.", stop_reason="end_turn", usage=Usage(100, 50))
+
+    cfg = AgentConfig(
+        base_url="http://localhost:11434/v1",
+        model="qwen3:14b",
+        think=False,
+    )
+    with patch("arasul_tui.agent.agent.chat", AsyncMock(side_effect=mock_chat)):
+        session = AgentSession(tmp_path, config=cfg)
+        await session.run("Do something")
+
+    assert captured_systems and captured_systems[0].endswith("/no_think")

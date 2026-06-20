@@ -13,6 +13,7 @@ _DEFAULTS: dict = {
     "num_ctx": 16384,
     "temperature": 0.1,
     "max_output_tokens": 4096,
+    "think": True,
     "safe_command_prefixes": [
         "pytest", "python -m pytest",
         "npm test", "npm run test",
@@ -33,6 +34,7 @@ class AgentConfig:
     num_ctx: int = 16384
     temperature: float = 0.1
     max_output_tokens: int = 4096
+    think: bool = True
     safe_command_prefixes: list[str] = field(default_factory=list)
 
     def is_safe_command(self, command: str) -> bool:
@@ -50,6 +52,7 @@ def load_agent_config() -> AgentConfig:
         num_ctx=merged.get("num_ctx", 16384),
         temperature=merged["temperature"],
         max_output_tokens=merged["max_output_tokens"],
+        think=merged.get("think", True),
         safe_command_prefixes=merged["safe_command_prefixes"],
     )
 
@@ -63,6 +66,7 @@ def save_agent_config(cfg: AgentConfig) -> None:
         "num_ctx": cfg.num_ctx,
         "temperature": cfg.temperature,
         "max_output_tokens": cfg.max_output_tokens,
+        "think": cfg.think,
         "safe_command_prefixes": cfg.safe_command_prefixes,
     }
     _save(data)

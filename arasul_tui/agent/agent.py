@@ -62,6 +62,7 @@ class AgentCallbacks:
     on_tool_result: Callable[[str, str], None] | None = None
     on_prune: Callable[[int], None] | None = None  # called with messages dropped
     on_error: Callable[[str], None] | None = None
+    on_llm_start: Callable[[], None] | None = None  # fired before each LLM call
 
     def text_token(self, token: str) -> None:
         if self.on_text_token:
@@ -82,6 +83,10 @@ class AgentCallbacks:
     def error(self, msg: str) -> None:
         if self.on_error:
             self.on_error(msg)
+
+    def llm_start(self) -> None:
+        if self.on_llm_start:
+            self.on_llm_start()
 
 
 @dataclass
@@ -127,13 +132,16 @@ def _read_claude_md(project_path: Path) -> str:
     return f"Project instructions (CLAUDE.md):\n{content}"
 
 
-def _build_system_prompt(project_path: Path, repo_map_text: str) -> str:
+def _build_system_prompt(project_path: Path, repo_map_text: str, think: bool = True) -> str:
     parts = [_SYSTEM_CORE.format(project_name=project_path.name)]
     claude_md = _read_claude_md(project_path)
     if claude_md:
         parts.append(claude_md)
     parts.append(repo_map_text or "(empty project — no source files found)")
-    return "\n\n".join(parts)
+    system = "\n\n".join(parts)
+    if not think:
+        system += "\n/no_think"
+    return system
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +181,7 @@ class AgentSession:
 
         # Build initial system prompt (no task hint yet)
         repo_map = RepoMap(project_path).render(token_budget=2048)
-        self.system = _build_system_prompt(project_path, repo_map)
+        self.system = _build_system_prompt(project_path, repo_map, think=self.cfg.think)
         self.budget.consume(self.system)
 
     async def run(self, task: str) -> AgentResult:
@@ -182,7 +190,7 @@ class AgentSession:
         if task != self._last_hint:
             self._last_hint = task
             repo_map = RepoMap(self.project_path).render(token_budget=2048, hint=task)
-            self.system = _build_system_prompt(self.project_path, repo_map)
+            self.system = _build_system_prompt(self.project_path, repo_map, think=self.cfg.think)
 
         self.messages.append({"role": "user", "content": task})
         self.budget.consume(task)
@@ -203,6 +211,7 @@ class AgentSession:
                 self.cb.prune(before - len(self.messages))
 
             # --- LLM call ---
+            self.cb.llm_start()
             response = await _call_llm(self.messages, self.system, self.cfg, self.cb)
 
             if response is None:

@@ -58,6 +58,7 @@ class ChatUI:
     def __init__(self, project_path: Path) -> None:
         self.project_path = project_path
         self._in_stream = False  # True while LLM tokens are flowing
+        self._thinking = False   # True while waiting for first token (spinner active)
         self._always_approve = False  # set when user presses 'a'
 
     # ------------------------------------------------------------------
@@ -107,14 +108,32 @@ class ChatUI:
     # Streaming output
     # ------------------------------------------------------------------
 
+    def on_llm_start(self) -> None:
+        """Show a ⋯ indicator while waiting for the first token."""
+        pad = content_pad()
+        sys.stdout.write(f"{pad}  ⋯\r")  # ⋯ + carriage return (overwritten by first token)
+        sys.stdout.flush()
+        self._thinking = True
+
+    def _end_thinking(self) -> None:
+        if self._thinking:
+            sys.stdout.write("\033[2K\r")  # ANSI: erase line, cursor to column 0
+            sys.stdout.flush()
+            self._thinking = False
+
     def on_text_token(self, token: str) -> None:
-        if not self._in_stream:
+        if self._thinking:
+            self._end_thinking()
             self._in_stream = True
             sys.stdout.write(content_pad())  # indent first line
+        elif not self._in_stream:
+            self._in_stream = True
+            sys.stdout.write(content_pad())
         sys.stdout.write(token)
         sys.stdout.flush()
 
     def _end_stream(self) -> None:
+        self._end_thinking()
         if self._in_stream:
             sys.stdout.write("\n")
             sys.stdout.flush()
@@ -125,6 +144,7 @@ class ChatUI:
     # ------------------------------------------------------------------
 
     def on_tool_start(self, name: str, args: dict) -> None:
+        self._end_thinking()
         self._end_stream()
         pad = content_pad()
         icon = _TOOL_ICONS.get(name, "⚙")
@@ -150,6 +170,7 @@ class ChatUI:
             )
 
     def on_error(self, msg: str) -> None:
+        self._end_thinking()
         self._end_stream()
         pad = content_pad()
         console.print(f"{pad}[{WARNING}]{msg}[/{WARNING}]")
@@ -229,6 +250,7 @@ class ChatUI:
             on_tool_result=self.on_tool_result,
             on_prune=self.on_prune,
             on_error=self.on_error,
+            on_llm_start=self.on_llm_start,
         )
 
 

@@ -33,6 +33,10 @@ def cmd_agent(state: TuiState, args: list[str]) -> CommandResult:
     if args and args[0] == "config":
         return _cmd_agent_config(args[1:])
 
+    # --- undo subcommand ---
+    if args and args[0] == "undo":
+        return _cmd_agent_undo(state, args[1:])
+
     if not state.active_project:
         print_warning("No active project.")
         print_info("Open a project first — type its name or number.")
@@ -109,7 +113,7 @@ async def _multi_turn_loop(
 # ---------------------------------------------------------------------------
 
 _CONFIG_HELP = (
-    "Usage: agent config [show | model <name> | url <url> | num-ctx <n> | reset]"
+    "Usage: agent config [show | model <name> | url <url> | num-ctx <n> | think on/off | reset]"
 )
 
 
@@ -120,12 +124,14 @@ def _cmd_agent_config(args: list[str]) -> CommandResult:
     sub = args[0].lower() if args else "show"
 
     if sub == "show":
+        think_label = "on (full reasoning)" if cfg.think else "off  (/no_think — faster)"
         console.print()
         console.print(f"{pad}[{PRIMARY}]◆ Agent Config[/{PRIMARY}]")
         console.print(f"{pad}  Model    [{DIM}]{cfg.model}[/{DIM}]")
         console.print(f"{pad}  URL      [{DIM}]{cfg.base_url}[/{DIM}]")
         console.print(f"{pad}  Context  [{DIM}]{cfg.context_limit} tokens (num_ctx: {cfg.num_ctx})[/{DIM}]")
         console.print(f"{pad}  Temp     [{DIM}]{cfg.temperature}[/{DIM}]")
+        console.print(f"{pad}  Think    [{DIM}]{think_label}[/{DIM}]")
         console.print()
         return CommandResult(ok=True, style="silent")
 
@@ -139,6 +145,14 @@ def _cmd_agent_config(args: list[str]) -> CommandResult:
         cfg.base_url = args[1]
         save_agent_config(cfg)
         console.print(f"{pad}[{SUCCESS}]✓[/{SUCCESS}] URL → [{DIM}]{cfg.base_url}[/{DIM}]")
+        return CommandResult(ok=True, style="silent")
+
+    if sub == "think" and len(args) >= 2:
+        val = args[1].lower() in ("on", "true", "1", "yes")
+        cfg.think = val
+        save_agent_config(cfg)
+        label = "on (full reasoning)" if val else "off (/no_think — faster)"
+        console.print(f"{pad}[{SUCCESS}]✓[/{SUCCESS}] Think → [{DIM}]{label}[/{DIM}]")
         return CommandResult(ok=True, style="silent")
 
     if sub in ("num-ctx", "numctx", "ctx") and len(args) >= 2:
@@ -169,3 +183,63 @@ def _cmd_agent_config(args: list[str]) -> CommandResult:
     print_warning(f"Unknown option: {sub!r}")
     print_info(_CONFIG_HELP)
     return CommandResult(ok=False, style="silent")
+
+
+# ---------------------------------------------------------------------------
+# /agent undo
+# ---------------------------------------------------------------------------
+
+def _cmd_agent_undo(state: TuiState, args: list[str]) -> CommandResult:
+    """Restore a file from its last .openara-backups/ snapshot."""
+    import asyncio
+
+    from arasul_tui.agent.tools.file_tools import _BACKUP_DIR, undo_file
+
+    if not state.active_project:
+        print_warning("No active project.")
+        return CommandResult(ok=False, style="silent")
+
+    project_path = state.active_project
+    pad = content_pad()
+
+    if args:
+        # undo a specific file
+        path = args[0]
+        try:
+            msg = asyncio.run(undo_file(path, project_path))
+            console.print(f"{pad}[{SUCCESS}]✓[/{SUCCESS}] {msg}")
+        except Exception as exc:
+            print_warning(str(exc))
+            return CommandResult(ok=False, style="silent")
+        return CommandResult(ok=True, style="silent")
+
+    # No path: list available backups
+    backup_root = project_path / _BACKUP_DIR
+    if not backup_root.exists():
+        print_info("No backups yet — write_file creates backups automatically.")
+        return CommandResult(ok=True, style="silent")
+
+    console.print()
+    console.print(f"{pad}[{PRIMARY}]◆ Available backups[/{PRIMARY}]  [{DIM}](agent undo <path> to restore)[/{DIM}]")
+    found = False
+    for backup_dir in sorted(backup_root.rglob("*.bak")):
+        rel = backup_dir.relative_to(backup_root)
+        file_path = str(rel.parent)  # drop the timestamp filename
+        import time as _time
+        try:
+            ts = int(backup_dir.stem) / 1000
+            age = _time.time() - ts
+            if age < 60:
+                age_str = f"{int(age)}s ago"
+            elif age < 3600:
+                age_str = f"{int(age/60)}m ago"
+            else:
+                age_str = f"{int(age/3600)}h ago"
+        except ValueError:
+            age_str = ""
+        console.print(f"{pad}  [{DIM}]{file_path}[/{DIM}]  {age_str}")
+        found = True
+    if not found:
+        print_info("No backup files found.")
+    console.print()
+    return CommandResult(ok=True, style="silent")
