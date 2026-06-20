@@ -71,13 +71,57 @@ ok "Python $PY_VER"
 # ── Install package ──────────────────────────────────────────
 h "Installing Open Ara"
 REPO="git+https://github.com/koljaschoepe/OpenAra.git"
-if python3 -m pip install -q "openara[agent] @ ${REPO}" 2>&1; then
+PKG="openara[agent] @ ${REPO}"
+
+_install_pkg() {
+  # 1. pipx (cleanest on macOS — isolated venv, no PATH issues)
+  if command -v pipx &>/dev/null; then
+    info "Using pipx…"
+    pipx install --force "openara @ ${REPO}" \
+      --pip-args "--extra-index-url https://pypi.org/simple/" 2>/dev/null || \
+    pipx install --force "openara @ ${REPO}" 2>/dev/null || return 1
+    # inject openai separately (pipx extras are tricky with direct URLs)
+    pipx inject openara openai 2>/dev/null || true
+    return 0
+  fi
+
+  # 2. pip --user (works everywhere; bypasses macOS PEP 668 guard)
+  if python3 -m pip install --user -q "${PKG}" 2>/dev/null; then
+    return 0
+  fi
+
+  # 3. pip --user --break-system-packages (macOS Homebrew Python 3.12+)
+  if python3 -m pip install --user --break-system-packages -q "${PKG}" 2>/dev/null; then
+    return 0
+  fi
+
+  return 1
+}
+
+if python3 -c "import arasul_tui" 2>/dev/null; then
+  ok "openara already installed (dev mode)"
+elif _install_pkg; then
   ok "openara installed  (commands: ara · openara · arasul)"
 else
-  python3 -c "import arasul_tui" 2>/dev/null && ok "openara available (dev install)" || {
-    err "Install failed. Try: pip install 'openara[agent] @ ${REPO}'"
-    exit 1
-  }
+  err "Install failed."
+  info "Try manually: pip install --user --break-system-packages '${PKG}'"
+  info "Or:          brew install pipx && pipx install 'openara @ ${REPO}'"
+  exit 1
+fi
+
+# ── Ensure ~/.local/bin is in PATH ───────────────────────────
+_LOCAL_BIN="$HOME/.local/bin"
+if [[ ":$PATH:" != *":${_LOCAL_BIN}:"* ]]; then
+  SHELL_RC=""
+  if [[ "$SHELL" == *zsh* ]]; then SHELL_RC="$HOME/.zshrc"
+  elif [[ "$SHELL" == *bash* ]]; then SHELL_RC="$HOME/.bashrc"; fi
+
+  if [[ -n "$SHELL_RC" ]]; then
+    echo "" >> "$SHELL_RC"
+    echo "export PATH=\"\$HOME/.local/bin:\$PATH\"  # added by Open Ara install" >> "$SHELL_RC"
+    export PATH="${_LOCAL_BIN}:${PATH}"
+    warn "Added ~/.local/bin to PATH in ${SHELL_RC} — restart your terminal or run: source ${SHELL_RC}"
+  fi
 fi
 
 # ── Interactive prompts (if args not provided) ───────────────
