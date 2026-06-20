@@ -32,10 +32,15 @@ dependencies = [
 browser = [
     "playwright>=1.51.0",
 ]
+agent = [
+    "openai>=1.50.0",
+]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0",
     "ruff>=0.8.0",
+    "openai>=1.50.0",
 ]
 
 [project.urls]
