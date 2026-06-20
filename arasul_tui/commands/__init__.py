@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from arasul_tui.commands.agent_cmd import cmd_agent
 from arasul_tui.commands.ai import cmd_auth, cmd_claude
 from arasul_tui.commands.browser_cmd import cmd_browser
 from arasul_tui.commands.expose_cmd import cmd_expose
@@ -37,6 +38,8 @@ __all__ = [
     "_clone_finish",
     "_delete_confirm",
     "_delete_select",
+    # Agent
+    "cmd_agent",
     # AI
     "cmd_claude",
     "cmd_auth",

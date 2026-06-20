@@ -5,6 +5,7 @@ import shlex
 from rich.markup import escape as _escape
 
 from arasul_tui.commands import (
+    cmd_agent,
     cmd_auth,
     cmd_browser,
     cmd_claude,
@@ -92,6 +93,17 @@ def build_registry() -> CommandRegistry:
             "All projects",
             category="Projects",
             aliases=["projects", "list", "all projects", "show projects"],
+        )
+    )
+
+    # Agent
+    reg.register(
+        CommandSpec(
+            "agent",
+            cmd_agent,
+            "Run AI agent on active project",
+            category="Agent",
+            aliases=["a", "ask", "ai agent", "run agent"],
         )
     )
 
