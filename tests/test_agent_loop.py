@@ -14,6 +14,7 @@ import pytest
 from arasul_tui.agent.agent import (
     AgentCallbacks,
     AgentResult,
+    AgentSession,
     _auto_approve,
     run_agent,
 )
@@ -391,3 +392,132 @@ async def test_agent_handles_llm_error_gracefully(tmp_path):
 async def test_auto_approve_always_returns_true():
     result = await _auto_approve("write_file", {"path": "x"}, "diff...")
     assert result is True
+
+
+# ---------------------------------------------------------------------------
+# AgentSession — multi-turn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_accumulates_messages_across_turns(tmp_path):
+    """Messages from turn 1 are still present in the conversation during turn 2."""
+    received_message_counts: list[int] = []
+
+    async def recording_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        received_message_counts.append(len(messages))
+        return _text_response("Done.")
+
+    mock = AsyncMock(side_effect=recording_chat)
+    with patch("arasul_tui.agent.agent.chat", mock):
+        session = AgentSession(tmp_path, config=_config())
+        await session.run("First task")
+        await session.run("Second task")
+
+    # Turn 1: system + user = 2 messages (system is in messages list here)
+    # Actually chat() receives full_messages = [system, *messages]
+    # Turn 1 call: 2 messages (system + "First task")
+    # Turn 2 call: at least 4 messages (system + "First task" + assistant response + "Second task")
+    assert received_message_counts[0] < received_message_counts[1]
+
+
+@pytest.mark.asyncio
+async def test_session_run_returns_independent_results(tmp_path):
+    """Each run() call returns its own AgentResult with correct iteration count."""
+    responses = [
+        _text_response("First done."),
+        _tool_response(("read_file", {"path": "x.py"})),
+        _text_response("Second done."),
+    ]
+    (tmp_path / "x.py").write_text("pass\n")
+
+    mock = _make_chat_mock(*responses)
+    with patch("arasul_tui.agent.agent.chat", mock):
+        session = AgentSession(tmp_path, config=_config())
+        r1 = await session.run("First task")
+        r2 = await session.run("Second task")
+
+    assert r1.text == "First done."
+    assert r1.tool_calls_made == 0
+    assert r2.text == "Second done."
+    assert r2.tool_calls_made == 1
+
+
+@pytest.mark.asyncio
+async def test_session_repo_map_refreshed_on_hint_change(tmp_path):
+    """System prompt is rebuilt when the task hint changes between turns."""
+    system_prompts: list[str] = []
+
+    async def capture_system(messages, system, tools, config, on_token=None, on_tool_start=None):
+        system_prompts.append(system)
+        return _text_response("OK")
+
+    mock = AsyncMock(side_effect=capture_system)
+    with patch("arasul_tui.agent.agent.chat", mock):
+        session = AgentSession(tmp_path, config=_config())
+        await session.run("authentication bug")
+        await session.run("authentication bug")  # same hint — no rebuild
+        await session.run("database schema")     # different hint — rebuilds
+
+    # Same hint → same system prompt for calls 1 and 2
+    assert system_prompts[0] == system_prompts[1]
+    # Different hint → system prompt may differ (repo map re-ranked)
+    # We can't assert they differ (empty project), but no crash
+    assert len(system_prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_session_tool_errors_dont_break_subsequent_turns(tmp_path):
+    """A ToolError in turn 1 is recovered; turn 2 completes normally."""
+    mock = _make_chat_mock(
+        _tool_response(("read_file", {"path": "missing.py"})),  # will error
+        _text_response("File not found, that's fine."),
+        _text_response("Second task done."),
+    )
+    with patch("arasul_tui.agent.agent.chat", mock):
+        session = AgentSession(tmp_path, config=_config())
+        r1 = await session.run("Read missing.py")
+        r2 = await session.run("Now do something else")
+
+    assert r1.stopped_reason == "done"
+    assert r2.stopped_reason == "done"
+    assert r2.text == "Second task done."
+
+
+@pytest.mark.asyncio
+async def test_session_max_tool_calls_resets_per_turn(tmp_path):
+    """Each turn starts a fresh tool-call counter (session doesn't carry over)."""
+    (tmp_path / "f.py").write_text("x = 1\n")
+
+    # Turn 1 uses 2 tool calls, turn 2 uses 1 — both should complete
+    responses = [
+        _tool_response(("read_file", {"path": "f.py"})),
+        _tool_response(("read_file", {"path": "f.py"})),
+        _text_response("Turn 1 done."),
+        _tool_response(("read_file", {"path": "f.py"})),
+        _text_response("Turn 2 done."),
+    ]
+    mock = _make_chat_mock(*responses)
+    with patch("arasul_tui.agent.agent.chat", mock):
+        with patch("arasul_tui.agent.agent._MAX_TOOL_CALLS", 5):
+            session = AgentSession(tmp_path, config=_config())
+            r1 = await session.run("Two reads")
+            r2 = await session.run("One read")
+
+    assert r1.tool_calls_made == 2
+    assert r2.tool_calls_made == 1
+
+
+@pytest.mark.asyncio
+async def test_session_budget_shared_across_turns(tmp_path):
+    """Token budget is shared — second turn sees remaining budget, not full budget."""
+    cfg = AgentConfig(base_url="http://localhost:11434/v1", model="qwen3:14b", context_limit=500)
+    mock = _make_chat_mock(_text_response("OK"))
+    with patch("arasul_tui.agent.agent.chat", mock):
+        session = AgentSession(tmp_path, config=cfg)
+        await session.run("First")
+        budget_after_first = session.budget.used
+        await session.run("Second")
+        budget_after_second = session.budget.used
+
+    assert budget_after_second > budget_after_first

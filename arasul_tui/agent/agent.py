@@ -145,7 +145,111 @@ async def _auto_approve(name: str, args: dict, preview: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Session — persists context across multiple agent turns
+# ---------------------------------------------------------------------------
+
+class AgentSession:
+    """Maintains conversation history and budget across turns.
+
+    Create once per interactive session; call run() for each follow-up task.
+    run_agent() is a thin single-turn wrapper around this class.
+    """
+
+    def __init__(
+        self,
+        project_path: Path,
+        config: AgentConfig | None = None,
+        callbacks: AgentCallbacks | None = None,
+        approval: ApprovalCallback | None = None,
+    ) -> None:
+        self.project_path = project_path
+        self.cfg = config or load_agent_config()
+        self.cb = callbacks or AgentCallbacks()
+        self.approve = approval or _auto_approve
+
+        self.budget = TokenBudget(max_tokens=self.cfg.context_limit)
+        self.messages: list[dict] = []
+        self._last_hint: str = ""
+
+        # Build initial system prompt (no task hint yet)
+        repo_map = RepoMap(project_path).render(token_budget=2048)
+        self.system = _build_system_prompt(project_path, repo_map)
+        self.budget.consume(self.system)
+
+    async def run(self, task: str) -> AgentResult:
+        """Execute one turn, continuing from prior conversation history."""
+        # Re-render repo map when the task hint changes (cheap re-rank)
+        if task != self._last_hint:
+            self._last_hint = task
+            repo_map = RepoMap(self.project_path).render(token_budget=2048, hint=task)
+            self.system = _build_system_prompt(self.project_path, repo_map)
+
+        self.messages.append({"role": "user", "content": task})
+        self.budget.consume(task)
+
+        total_tool_calls = 0
+        final_text = ""
+        stopped_reason = "done"
+
+        for iteration in range(_MAX_ITERATIONS):
+            # --- Context budget guard ---
+            if self.budget.utilization >= _PRUNE_THRESHOLD:
+                before = len(self.messages)
+                self.messages = prune_conversation(
+                    self.messages,
+                    max_tokens=int(self.cfg.context_limit * 0.55),
+                    keep_last=6,
+                )
+                self.cb.prune(before - len(self.messages))
+
+            # --- LLM call ---
+            response = await _call_llm(self.messages, self.system, self.cfg, self.cb)
+
+            if response is None:
+                stopped_reason = "error"
+                break
+
+            self.messages.append(response.to_message())
+
+            if response.stop_reason in ("end_turn", "max_tokens") or not response.has_tool_calls:
+                final_text = response.text
+                if response.stop_reason == "max_tokens":
+                    log.warning("Model hit max_tokens — response may be incomplete")
+                break
+
+            # --- Tool calls ---
+            if total_tool_calls >= _MAX_TOOL_CALLS:
+                self.cb.error(f"Stopped: reached {_MAX_TOOL_CALLS} tool calls.")
+                stopped_reason = "max_tool_calls"
+                break
+
+            tool_results: list[dict] = []
+            for tc in response.tool_calls:
+                if total_tool_calls >= _MAX_TOOL_CALLS:
+                    break
+                total_tool_calls += 1
+
+                result_text = await _dispatch_tool(tc, self.project_path, self.cb, self.approve)
+                self.budget.consume(result_text)
+                tool_results.append(tool_result_message(tc.id, result_text))
+
+            self.messages.extend(tool_results)
+
+        else:
+            stopped_reason = "max_iterations"
+            self.cb.error(f"Stopped: reached {_MAX_ITERATIONS} iterations without completing.")
+
+        return AgentResult(
+            text=final_text,
+            tool_calls_made=total_tool_calls,
+            iterations=iteration + 1,
+            tokens_used=self.budget.used,
+            stopped_reason=stopped_reason,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Single-turn convenience wrapper (backward-compatible public API)
 # ---------------------------------------------------------------------------
 
 async def run_agent(
@@ -155,83 +259,14 @@ async def run_agent(
     callbacks: AgentCallbacks | None = None,
     approval: ApprovalCallback | None = None,
 ) -> AgentResult:
-    """Run the agent loop until the task is complete or a guard fires.
-
-    *approval* is called before any destructive tool call. It receives the tool
-    name, its arguments dict, and a human-readable preview (diff or command).
-    Return True to allow, False to skip this tool call.
-    """
-    cfg = config or load_agent_config()
-    cb = callbacks or AgentCallbacks()
-    approve = approval or _auto_approve
-
-    budget = TokenBudget(max_tokens=cfg.context_limit)
-    repo_map = RepoMap(project_path).render(token_budget=2048, hint=task)
-    system = _build_system_prompt(project_path, repo_map)
-    budget.consume(system)
-
-    messages: list[dict] = [{"role": "user", "content": task}]
-    budget.consume(task)
-
-    total_tool_calls = 0
-    final_text = ""
-    stopped_reason = "done"
-
-    for iteration in range(_MAX_ITERATIONS):
-        # --- Context budget guard ---
-        if budget.utilization >= _PRUNE_THRESHOLD:
-            before = len(messages)
-            messages = prune_conversation(
-                messages,
-                max_tokens=int(cfg.context_limit * 0.55),
-                keep_last=6,
-            )
-            cb.prune(before - len(messages))
-
-        # --- LLM call ---
-        response = await _call_llm(messages, system, cfg, cb)
-
-        if response is None:
-            stopped_reason = "error"
-            break
-
-        messages.append(response.to_message())
-
-        if response.stop_reason in ("end_turn", "max_tokens") or not response.has_tool_calls:
-            final_text = response.text
-            if response.stop_reason == "max_tokens":
-                log.warning("Model hit max_tokens — response may be incomplete")
-            break
-
-        # --- Tool calls ---
-        if total_tool_calls >= _MAX_TOOL_CALLS:
-            cb.error(f"Stopped: reached {_MAX_TOOL_CALLS} tool calls.")
-            stopped_reason = "max_tool_calls"
-            break
-
-        tool_results: list[dict] = []
-        for tc in response.tool_calls:
-            if total_tool_calls >= _MAX_TOOL_CALLS:
-                break
-            total_tool_calls += 1
-
-            result_text = await _dispatch_tool(tc, project_path, cb, approve)
-            budget.consume(result_text)
-            tool_results.append(tool_result_message(tc.id, result_text))
-
-        messages.extend(tool_results)
-
-    else:
-        stopped_reason = "max_iterations"
-        cb.error(f"Stopped: reached {_MAX_ITERATIONS} iterations without completing.")
-
-    return AgentResult(
-        text=final_text,
-        tool_calls_made=total_tool_calls,
-        iterations=iteration + 1,
-        tokens_used=budget.used,
-        stopped_reason=stopped_reason,
+    """Single-turn wrapper — creates an AgentSession and runs one turn."""
+    session = AgentSession(
+        project_path,
+        config=config,
+        callbacks=callbacks,
+        approval=approval,
     )
+    return await session.run(task)
 
 
 # ---------------------------------------------------------------------------

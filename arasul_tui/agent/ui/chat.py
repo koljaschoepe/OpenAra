@@ -58,6 +58,7 @@ class ChatUI:
     def __init__(self, project_path: Path) -> None:
         self.project_path = project_path
         self._in_stream = False  # True while LLM tokens are flowing
+        self._always_approve = False  # set when user presses 'a'
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -70,6 +71,15 @@ class ChatUI:
             f"{pad}[{PRIMARY}]◆ Open Ara[/{PRIMARY}]  "
             f"[dim]{self.project_path.name}[/dim]"
         )
+        console.print(f"{pad}  {task}")
+        console.print(f"{pad}[{DIM}]{'─' * 52}[/{DIM}]")
+        console.print()
+
+    def print_separator(self, task: str) -> None:
+        """Print a visual separator between turns in a multi-turn session."""
+        pad = content_pad()
+        console.print()
+        console.print(f"{pad}[{DIM}]{'─' * 52}[/{DIM}]")
         console.print(f"{pad}  {task}")
         console.print(f"{pad}[{DIM}]{'─' * 52}[/{DIM}]")
         console.print()
@@ -149,33 +159,64 @@ class ChatUI:
     # ------------------------------------------------------------------
 
     async def ask_approval(self, name: str, args: dict, preview: str) -> bool:
-        """Show a diff/preview and prompt the user to approve or reject."""
+        """Show a diff/preview and prompt the user to approve or reject.
+
+        Keys: y = yes once · a/A = always for this session · N/Enter = skip
+        """
         pad = content_pad()
+
+        # Fast path: session-level always-approve
+        if self._always_approve:
+            console.print(f"{pad}  [{DIM}]Auto-approved[/{DIM}]")
+            return True
 
         # Show preview
         if preview and preview not in ("(no changes)",):
             if name == "write_file" and ("\n+++ " in preview or "\n--- " in preview or "(new file)" in preview):
                 _print_diff(preview)
             else:
-                # Command or short preview
                 console.print(f"{pad}  [{DIM}]{preview[:200]}[/{DIM}]")
 
         # Prompt
-        prompt_str = f"{pad}  [{WARNING}]Approve {name}?[/{WARNING}] [y/N]: "
-        console.print(prompt_str, end="")
+        console.print(
+            f"{pad}  [{WARNING}]Approve {name}?[/{WARNING}]"
+            f" [{DIM}]y[es] · a[lways] · N[o][/{DIM}]: ",
+            end="",
+        )
         try:
             answer = await asyncio.to_thread(_blocking_input)
         except (EOFError, KeyboardInterrupt):
             console.print()
             return False
 
-        approved = answer.strip().lower() in ("y", "yes")
-        if approved:
+        key = answer.strip().lower()
+        if key in ("a", "always"):
+            self._always_approve = True
+            console.print(f"{pad}  [{SUCCESS}]✓ always approved for this session[/{SUCCESS}]")
+            console.print()
+            return True
+        if key in ("y", "yes"):
             console.print(f"{pad}  [{SUCCESS}]✓ approved[/{SUCCESS}]")
-        else:
-            console.print(f"{pad}  [{DIM}]skipped[/{DIM}]")
+            console.print()
+            return True
+
+        console.print(f"{pad}  [{DIM}]skipped[/{DIM}]")
         console.print()
-        return approved
+        return False
+
+    async def ask_next_task(self) -> str | None:
+        """Prompt for a follow-up task; return None if the user wants to exit."""
+        pad = content_pad()
+        console.print(
+            f"{pad}[{DIM}]↩  Next task[/{DIM}] [{DIM}](Enter to exit):[/{DIM}] ",
+            end="",
+        )
+        try:
+            text = await asyncio.to_thread(_blocking_input)
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            return None
+        return text.strip() or None
 
     # ------------------------------------------------------------------
     # Build AgentCallbacks wired to this UI
