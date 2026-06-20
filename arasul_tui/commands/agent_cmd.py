@@ -637,6 +637,14 @@ async def _run_explain_async(task: str, project_path: Path, cfg: AgentConfig, ui
     ui.print_footer(result)
 
 
+def cmd_new_session(state: TuiState, args: list[str]) -> CommandResult:
+    """Clear the current conversation and start fresh."""
+    from arasul_tui.core.ui import console, content_pad
+    pad = content_pad()
+    console.print(f"{pad}[{DIM}]Starting new session…[/{DIM}]")
+    return CommandResult(ok=True, style="silent", reset_session=True)
+
+
 def _get_git_diff(project_path: Path, ref: str | None = None) -> tuple[str | None, bool]:
     """Return (diff_text, was_truncated). Returns (None, False) if not a git repo."""
     import subprocess

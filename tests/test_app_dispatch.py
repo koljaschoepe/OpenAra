@@ -190,42 +190,42 @@ class TestDispatchCommand:
     def test_shortcut_n_creates(self, state: TuiState):
         with patch("arasul_tui.app.run_command") as mock_run:
             mock_run.return_value = MagicMock(quit_app=False)
-            result, launch, should_break = _dispatch_command(state, "n")
+            result, launch, should_break, matched = _dispatch_command(state, "n")
         mock_run.assert_called_once_with(state, "/create")
 
     def test_shortcut_d_deletes(self, state: TuiState):
         with patch("arasul_tui.app.run_command") as mock_run:
             mock_run.return_value = MagicMock(quit_app=False)
-            result, launch, should_break = _dispatch_command(state, "d")
+            result, launch, should_break, matched = _dispatch_command(state, "d")
         mock_run.assert_called_once_with(state, "/delete")
 
     def test_number_selection(self, state_with_projects: TuiState):
         with patch("arasul_tui.app.project_list", return_value=["alpha", "beta", "gamma"]):
-            result, launch, should_break = _dispatch_command(state_with_projects, "1")
+            result, launch, should_break, matched = _dispatch_command(state_with_projects, "1")
         assert launch is None
         assert should_break is False
 
     def test_back_from_project(self, state: TuiState):
         state.active_project = Path("/tmp/proj")
         state.screen = Screen.PROJECT
-        result, launch, should_break = _dispatch_command(state, "b")
+        result, launch, should_break, matched = _dispatch_command(state, "b")
         assert state.active_project is None
         assert state.screen == Screen.MAIN
 
     def test_back_already_main(self, state: TuiState):
         state.active_project = None
-        result, launch, should_break = _dispatch_command(state, "back")
+        result, launch, should_break, matched = _dispatch_command(state, "back")
         assert result is None  # Just prints info
 
     def test_slash_command(self, state: TuiState):
         with patch("arasul_tui.app.run_command") as mock_run:
             mock_run.return_value = MagicMock(quit_app=False)
-            result, launch, should_break = _dispatch_command(state, "/help")
+            result, launch, should_break, matched = _dispatch_command(state, "/help")
         assert result is not None
 
     def test_unknown_command(self, state: TuiState):
         with patch("arasul_tui.app.project_list", return_value=[]):
-            result, launch, should_break = _dispatch_command(state, "xyzqwerty")
+            result, launch, should_break, matched = _dispatch_command(state, "xyzqwerty")
         assert result is None
         assert should_break is False
 

@@ -9,6 +9,7 @@ from arasul_tui.commands import (
     cmd_auth,
     cmd_commit,
     cmd_explain,
+    cmd_new_session,
     cmd_review,
     cmd_browser,
     cmd_claude,
@@ -316,6 +317,17 @@ def build_registry() -> CommandRegistry:
                 "up": "Connect",
                 "down": "Disconnect",
             },
+        )
+    )
+
+    # Session
+    reg.register(
+        CommandSpec(
+            "new",
+            cmd_new_session,
+            "Clear conversation and start fresh",
+            category="Agent",
+            aliases=["new session", "clear session", "reset session", "clear"],
         )
     )
 

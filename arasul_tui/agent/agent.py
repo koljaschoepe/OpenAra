@@ -171,6 +171,7 @@ class AgentSession:
         approval: ApprovalCallback | None = None,
         system_override: str | None = None,
         tools_override: list[dict] | None = None,
+        initial_messages: list[dict] | None = None,
     ) -> None:
         self.project_path = project_path
         self.cfg = config or load_agent_config()
@@ -178,7 +179,7 @@ class AgentSession:
         self.approve = approval or _auto_approve
 
         self.budget = TokenBudget(max_tokens=self.cfg.context_limit)
-        self.messages: list[dict] = []
+        self.messages: list[dict] = list(initial_messages) if initial_messages else []
         self._last_hint: str = ""
         self._has_system_override = system_override is not None
         self._tools: list[dict] | None = tools_override  # None → use TOOL_DEFINITIONS

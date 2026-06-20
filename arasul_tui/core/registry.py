@@ -105,3 +105,31 @@ class CommandRegistry:
                             return spec, remaining
 
         return None, []
+
+    def resolve_exact(self, text: str) -> tuple[CommandSpec | None, list[str]]:
+        """Like resolve() but only steps 1–2: exact name + exact alias, no fuzzy.
+
+        Used in coding-assistant mode so free-form task descriptions like
+        "fix the login bug" don't accidentally trigger TUI commands via
+        fuzzy substring matching.
+        """
+        words = text.lower().split()
+        if not words:
+            return None, []
+
+        spec = self._commands.get(words[0])
+        if spec:
+            return spec, words[1:]
+
+        for length in range(min(len(words), 4), 0, -1):
+            phrase = " ".join(words[:length])
+            cmd_name = self._alias_map.get(phrase)
+            if cmd_name:
+                spec = self._commands.get(cmd_name)
+                if spec:
+                    args = words[length:]
+                    if spec.subcommands and phrase in spec.subcommands:
+                        args = [phrase] + args
+                    return spec, args
+
+        return None, []

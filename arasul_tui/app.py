@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import hashlib
+import json
 import os
 import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -11,11 +17,16 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 
+from arasul_tui.agent.agent import AgentSession
+from arasul_tui.agent.config import AgentConfig, load_agent_config
+from arasul_tui.agent.ui.chat import ChatUI
 from arasul_tui.core.auth import get_auth_env, is_claude_configured
 from arasul_tui.core.router import REGISTRY, run_command
 from arasul_tui.core.state import Screen, TuiState
+from arasul_tui.core.theme import DIM, PRIMARY, SUCCESS, WARNING
 from arasul_tui.core.types import PendingHandler
 from arasul_tui.core.ui import (
+    VERSION,
     build_prompt,
     console,
     content_pad,
@@ -29,19 +40,218 @@ from arasul_tui.core.ui import (
 )
 
 
+# ---------------------------------------------------------------------------
+# CLI arg parsing
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _CliArgs:
+    initial_task: str | None = None
+    continue_flag: bool = False
+    model_override: str | None = None
+    project_override: Path | None = None
+    help_flag: bool = False
+    version_flag: bool = False
+
+
+def _parse_cli_args(argv: list[str]) -> _CliArgs:
+    result = _CliArgs()
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-c", "--continue"):
+            result.continue_flag = True
+        elif arg in ("-m", "--model") and i + 1 < len(argv):
+            result.model_override = argv[i + 1]
+            i += 1
+        elif arg in ("-p", "--project") and i + 1 < len(argv):
+            result.project_override = Path(argv[i + 1]).expanduser().resolve()
+            i += 1
+        elif arg in ("-h", "--help"):
+            result.help_flag = True
+        elif arg in ("-v", "--version"):
+            result.version_flag = True
+        elif not arg.startswith("-"):
+            result.initial_task = " ".join(argv[i:])
+            break
+        i += 1
+    return result
+
+
+def _print_help() -> None:
+    print(f"""  Open Ara — local AI coding assistant
+
+  Usage: ara [task] [options]
+
+  Options:
+    -c, --continue        Resume last session in current directory
+    -m, --model <name>    Override model for this session
+    -p, --project <path>  Use this project directory (default: git root / cwd)
+    -v, --version         Show version
+    -h, --help            Show this help
+
+  In the REPL:
+    <task>                Send a task to the agent
+    !<cmd>                Run a shell command directly (e.g. !git status)
+    /help                 All slash commands
+    /review [ref]         AI code review of git changes
+    /commit               Generate a commit message for staged changes
+    /explain [target]     Explain a file or the project architecture
+    /new                  Clear the conversation (fresh session)
+    /agent config         Show/change model and server URL
+    /exit                 Quit  (also: Ctrl+D)
+
+  Examples:
+    ara                              Interactive session in current directory
+    ara "fix the login bug"          Start immediately with a task
+    ara --continue                   Resume last conversation
+    ara --model qwen3:14b-nothink    Fast mode (no reasoning)
+""")
+
+
+# ---------------------------------------------------------------------------
+# Project / session helpers
+# ---------------------------------------------------------------------------
+
+def _find_git_root(path: Path) -> Path:
+    """Walk up directory tree to find the git root, or return path if not in a repo."""
+    current = path.resolve()
+    while current != current.parent:
+        if (current / ".git").is_dir():
+            return current
+        current = current.parent
+    return path.resolve()
+
+
+def _session_file(project_path: Path) -> Path:
+    h = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
+    return Path.home() / ".config" / "arasul" / "sessions" / f"{h}.json"
+
+
+def _save_session(project_path: Path, messages: list[dict]) -> None:
+    if not messages:
+        return
+    sf = _session_file(project_path)
+    with contextlib.suppress(OSError):
+        sf.parent.mkdir(parents=True, exist_ok=True)
+        sf.write_text(json.dumps(messages, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_session(project_path: Path) -> list[dict]:
+    sf = _session_file(project_path)
+    try:
+        data = json.loads(sf.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _make_agent_session(
+    project_path: Path,
+    cfg: AgentConfig,
+    initial_messages: list[dict] | None = None,
+) -> tuple[AgentSession, ChatUI]:
+    ui = ChatUI(project_path)
+    session = AgentSession(
+        project_path,
+        config=cfg,
+        callbacks=ui.make_callbacks(),
+        approval=ui.ask_approval,
+        initial_messages=initial_messages,
+    )
+    return session, ui
+
+
+def _run_task_in_session(task: str, agent_session: AgentSession, ui: ChatUI) -> None:
+    """Run one task on a persistent session — no inner follow-up loop."""
+    ui.print_header(task)
+    try:
+        result = asyncio.run(agent_session.run(task))
+        ui.print_footer(result)
+    except KeyboardInterrupt:
+        pad = content_pad()
+        console.print()
+        console.print(f"{pad}[{DIM}]Interrupted.[/{DIM}]")
+
+
+# ---------------------------------------------------------------------------
+# Shell passthrough
+# ---------------------------------------------------------------------------
+
+def _run_shell_command(cmd: str, cwd: Path) -> None:
+    """Execute a shell command directly (streams output via inherited stdio)."""
+    pad = content_pad()
+    try:
+        proc = subprocess.run(cmd, shell=True, cwd=cwd)
+        if proc.returncode != 0:
+            console.print(f"{pad}[{WARNING}]Exit {proc.returncode}[/{WARNING}]")
+    except OSError as exc:
+        print_error(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Compact startup header
+# ---------------------------------------------------------------------------
+
+def _print_coding_header(project_path: Path, cfg: AgentConfig) -> None:
+    """Minimal coding-assistant header: project, model, server, git branch."""
+    from rich.markup import escape as _esc
+
+    pad = content_pad()
+    console.print()
+    console.print(
+        f"{pad}[bold {PRIMARY}]◆[/bold {PRIMARY}]  [bold]Open Ara[/bold]  [{DIM}]{VERSION}[/{DIM}]",
+        highlight=False,
+    )
+    name = _esc(project_path.name)
+    model = _esc(cfg.model)
+    url = _esc(cfg.base_url)
+    console.print(
+        f"{pad}   [{PRIMARY}]{name}[/{PRIMARY}]  [{DIM}]{model}  ·  {url}[/{DIM}]",
+        highlight=False,
+    )
+
+    # Git branch (best-effort, no crash)
+    try:
+        br = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            cwd=project_path, capture_output=True, text=True, timeout=3,
+        )
+        dr = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_path, capture_output=True, text=True, timeout=3,
+        )
+        branch = br.stdout.strip()
+        if branch:
+            dirty_mark = f"  [{WARNING}]*[/{WARNING}]" if dr.stdout.strip() else ""
+            console.print(
+                f"{pad}   [{DIM}]{_esc(branch)}{dirty_mark}[/{DIM}]",
+                highlight=False,
+            )
+    except Exception:
+        pass
+
+    console.print(
+        f"{pad}   [{DIM}]Type a task, or /help for commands · Ctrl+D to exit[/{DIM}]",
+        highlight=False,
+    )
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# Command helpers (unchanged from original)
+# ---------------------------------------------------------------------------
+
 def _suggest_alternatives(command: str) -> None:
     """Show helpful suggestions when a command isn't recognized."""
     q = command.lower()
     suggestions: list[str] = []
 
-    # Check for close matches in command names
     for spec in REGISTRY.specs():
         name = spec.name
-        # Levenshtein-like: allow 1-2 char difference for short names
         if len(q) >= 3 and (q in name or name in q):
             suggestions.append(name)
             continue
-        # Check prefix overlap (at least 2 chars matching)
         common = 0
         for a, b in zip(q, name, strict=False):
             if a == b:
@@ -51,7 +261,6 @@ def _suggest_alternatives(command: str) -> None:
         if common >= 2 and len(q) <= len(name) + 2:
             suggestions.append(name)
             continue
-        # Check aliases
         for alias in spec.aliases:
             if q in alias or alias in q:
                 suggestions.append(name)
@@ -62,7 +271,7 @@ def _suggest_alternatives(command: str) -> None:
         hint = ", ".join(f"[bold]{s}[/bold]" for s in unique)
         print_warning(f"I don't know '[bold]{command}[/bold]'. Did you mean: {hint}?")
     else:
-        print_warning(f"I don't know '[bold]{command}[/bold]'. Try [bold]help[/bold] to see what I can do.")
+        print_warning(f"Unknown: '[bold]{command}[/bold]'. Type /help for commands.")
 
 
 class SmartCompleter(Completer):
@@ -71,7 +280,6 @@ class SmartCompleter(Completer):
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor.lstrip()
         if not text:
-            # Show all top-level commands on Tab with empty input
             for spec in REGISTRY.specs():
                 yield Completion(
                     spec.name,
@@ -81,12 +289,10 @@ class SmartCompleter(Completer):
                 )
             return
 
-        # Slash command mode
         if text.startswith("/"):
             yield from self._slash_completions(text)
             return
 
-        # Natural language mode — complete command names + aliases
         yield from self._natural_completions(text)
 
     def _slash_completions(self, text: str):
@@ -108,8 +314,6 @@ class SmartCompleter(Completer):
             return
 
         cmd = parts[0]
-
-        # Subcommand completion
         spec = REGISTRY.get(cmd)
         if spec and spec.subcommands:
             pref = ""
@@ -126,7 +330,6 @@ class SmartCompleter(Completer):
                     )
             return
 
-        # /open <name> completion
         if cmd == "open":
             names = project_list()
             pref = ""
@@ -145,7 +348,6 @@ class SmartCompleter(Completer):
     def _natural_completions(self, text: str):
         q = text.lower()
 
-        # Command names
         for spec in REGISTRY.specs():
             if spec.name.startswith(q) or q in spec.name:
                 yield Completion(
@@ -155,7 +357,6 @@ class SmartCompleter(Completer):
                     display_meta=spec.help_text,
                 )
 
-        # Aliases (only if no command name matched the prefix)
         seen = set()
         for spec in REGISTRY.specs():
             for alias in spec.aliases:
@@ -168,7 +369,6 @@ class SmartCompleter(Completer):
                         display_meta=f"{spec.help_text}",
                     )
 
-        # Project names
         for name in project_list():
             if name.lower().startswith(q) or q in name.lower():
                 yield Completion(
@@ -180,7 +380,6 @@ class SmartCompleter(Completer):
 
 
 def _handle_number(state: TuiState, num: int) -> bool:
-    """Select project by number. Returns True if handled."""
     projects = project_list()
     if 1 <= num <= len(projects):
         name = projects[num - 1]
@@ -193,7 +392,6 @@ def _handle_number(state: TuiState, num: int) -> bool:
 
 
 def _fuzzy_match(query: str, projects: list[str]) -> list[str]:
-    """Simple fuzzy matching: score projects by substring and prefix match."""
     q = query.lower()
     exact = [p for p in projects if p.lower() == q]
     if exact:
@@ -201,12 +399,10 @@ def _fuzzy_match(query: str, projects: list[str]) -> list[str]:
     prefix = [p for p in projects if p.lower().startswith(q)]
     if prefix:
         return prefix
-    # Substring match
     sub = [p for p in projects if q in p.lower()]
     if sub:
         return sub
 
-    # Character-by-character fuzzy
     def _score(name: str) -> int:
         n = name.lower()
         idx = 0
@@ -224,7 +420,6 @@ def _fuzzy_match(query: str, projects: list[str]) -> list[str]:
 
 
 def _try_launch_shortcut(state: TuiState, command: str) -> tuple[str, Path] | None:
-    """Handle g/lazygit and c/claude shortcuts. Returns (cmd, cwd) or None."""
     if not state.active_project:
         return None
 
@@ -240,7 +435,7 @@ def _try_launch_shortcut(state: TuiState, command: str) -> tuple[str, Path] | No
 
     if lower == "c":
         if not is_claude_configured():
-            return None  # caller will dispatch to /claude
+            return None
         if not shutil.which("claude"):
             print_error("[bold]claude[/bold] is not installed.")
             print_info("Install: [bold]npm install -g @anthropic-ai/claude-code[/bold]")
@@ -252,7 +447,6 @@ def _try_launch_shortcut(state: TuiState, command: str) -> tuple[str, Path] | No
 
 
 def _try_fuzzy_project(state: TuiState, command: str) -> bool:
-    """Try to match input to a project name. Returns True if handled."""
     projects = project_list()
     matches = _fuzzy_match(command, projects)
 
@@ -274,25 +468,26 @@ def _try_fuzzy_project(state: TuiState, command: str) -> bool:
 
 
 def _dispatch_command(state: TuiState, command: str) -> tuple:
-    """Dispatch a single command. Returns (result_or_none, launch_request, should_break)."""
+    """Route to a known command. Returns (result, launch, should_break, matched).
+
+    matched=False means nothing handled the input — caller decides what to do
+    (run as agent task if a project is active, else suggest alternatives).
+    """
     lower = command.lower()
 
-    # Shortcut: n (create), d (delete)
     if lower == "n":
-        return run_command(state, "/create"), None, False
+        return run_command(state, "/create"), None, False, True
     if lower == "d":
-        return run_command(state, "/delete"), None, False
+        return run_command(state, "/delete"), None, False, True
 
-    # Number selection
     if command.isdigit():
         num = int(command)
         if _handle_number(state, num):
             print_header(state, full=True)
         else:
             print_warning(f"No project with number [bold]{num}[/bold].")
-        return None, None, False
+        return None, None, False, True
 
-    # Back to main screen
     if lower in ("b", "back", "home", "main"):
         if state.active_project:
             state.active_project = None
@@ -300,38 +495,45 @@ def _dispatch_command(state: TuiState, command: str) -> tuple:
             print_header(state, full=True)
         else:
             print_info("Already at the main screen.")
-        return None, None, False
+        return None, None, False, True
 
-    # Launch shortcuts (g/lazygit, c/claude)
     launch = _try_launch_shortcut(state, command)
     if launch:
-        return None, launch, True
-    # c shortcut without claude configured → run /claude wizard
+        return None, launch, True, True
     if state.active_project and lower == "c" and not is_claude_configured():
-        return run_command(state, "/claude"), None, False
+        return run_command(state, "/claude"), None, False, True
 
-    # Slash commands
     if command.startswith("/"):
         result = run_command(state, command)
-        return result, None, result.quit_app
+        return result, None, result.quit_app, True
 
-    # Natural language command resolve
+    if state.active_project:
+        # Coding mode: exact name / alias match only.
+        # Fuzzy substring matching is skipped so task descriptions like
+        # "fix the login bug" don't accidentally trigger TUI commands.
+        spec, args = REGISTRY.resolve_exact(command)
+        if spec:
+            result = spec.handler(state, args)
+            return result, None, result.quit_app, True
+        return None, None, False, False  # → caller runs as agent task
+
+    # Dashboard mode (no active project): full fuzzy matching + project nav
     spec, args = REGISTRY.resolve(command)
     if spec:
         result = spec.handler(state, args)
-        return result, None, result.quit_app
+        return result, None, result.quit_app, True
 
-    # Fuzzy project search
     if _try_fuzzy_project(state, command):
-        return None, None, False
+        return None, None, False, True
 
-    # Nothing matched
-    _suggest_alternatives(command)
-    return None, None, False
+    return None, None, False, False
 
+
+# ---------------------------------------------------------------------------
+# SSH tunnel (unchanged)
+# ---------------------------------------------------------------------------
 
 def _ensure_tunnel_if_configured() -> None:
-    """Auto-start SSH tunnel before TUI if install config says so."""
     from arasul_tui.core.tunnel import ensure_ssh_tunnel, get_install_config
 
     install = get_install_config()
@@ -348,31 +550,69 @@ def _ensure_tunnel_if_configured() -> None:
     ok, msg = ensure_ssh_tunnel(ssh_host, ollama_host, ollama_port)
     pad = content_pad()
     if ok:
-        console.print(f"{pad}[dim]⟳  {msg}[/dim]")
+        console.print(f"{pad}[{DIM}]⟳  {msg}[/{DIM}]")
     else:
-        console.print(f"{pad}[yellow]⚠  SSH tunnel failed: {msg}[/yellow]")
-        console.print(f"{pad}[dim]   Run: ara agent check[/dim]")
+        console.print(f"{pad}[{WARNING}]⚠  SSH tunnel failed: {msg}[/{WARNING}]")
+        console.print(f"{pad}[{DIM}]   Run: /agent check[/{DIM}]")
 
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 def run() -> None:
+    # --- CLI args ---
+    cli = _parse_cli_args(sys.argv[1:])
+
+    if cli.version_flag:
+        print(f"Open Ara {VERSION}")
+        return
+    if cli.help_flag:
+        _print_help()
+        return
+
+    # --- Determine project directory ---
+    cwd = Path.cwd()
+    project_path = cli.project_override or _find_git_root(cwd)
+
+    # --- State ---
     try:
         state = TuiState(registry=REGISTRY)
+        state.active_project = project_path
+        state.screen = Screen.PROJECT
     except Exception as exc:
         print_error(f"Startup failed: {exc}")
         return
 
+    # --- SSH tunnel ---
     _ensure_tunnel_if_configured()
 
-    pending_handler: PendingHandler | None = None
-    wizard_step: tuple[int, int, str] | None = None
-    launch_request: tuple[str, Path] | None = None
+    # --- Config ---
+    cfg = load_agent_config()
+    if cli.model_override:
+        cfg.model = cli.model_override
 
+    # --- Session continuity ---
+    initial_messages: list[dict] | None = None
+    if cli.continue_flag:
+        loaded = _load_session(project_path)
+        if loaded:
+            initial_messages = loaded
+        else:
+            pad = content_pad()
+            console.print(f"{pad}[{DIM}]No saved session found for this directory.[/{DIM}]")
+
+    # --- Persistent agent session (lives for the whole ara invocation) ---
+    agent_session, ui = _make_agent_session(project_path, cfg, initial_messages)
+    agent_project = project_path
+
+    # --- Prompt session (prompt_toolkit) ---
     history_path = Path.home() / ".config" / "arasul" / "history"
     with contextlib.suppress(OSError):
         history_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        session: PromptSession[str] = PromptSession(
+        prompt_session: PromptSession[str] = PromptSession(
             history=FileHistory(str(history_path)),
             completer=SmartCompleter(),
             complete_while_typing=True,
@@ -389,49 +629,81 @@ def run() -> None:
             ),
         )
     except Exception as exc:
-        # Graceful fallback if prompt_toolkit can't initialize (e.g., broken TTY)
         print_error(f"Terminal initialization failed: {exc}")
         return
 
-    print_header(state, full=True)
+    # --- Startup display ---
+    _print_coding_header(project_path, cfg)
     state.first_run = False
 
-    # First-launch onboarding (minimal: just ask for name if unknown)
+    if cli.continue_flag and initial_messages:
+        turns = sum(1 for m in initial_messages if m.get("role") == "user")
+        pad = content_pad()
+        console.print(f"{pad}[{DIM}]Resumed — {turns} prior turn(s).[/{DIM}]\n")
+
+    # --- Onboarding (first launch only) ---
     from arasul_tui.core.onboarding import mark_onboarded, needs_onboarding, show_welcome
 
+    pending_handler: PendingHandler | None = None
+    wizard_step: tuple[int, int, str] | None = None
+    launch_request: tuple[str, Path] | None = None
     _in_onboarding = False
+
     if needs_onboarding():
         result = show_welcome()
         if result.prompt and result.pending_handler:
             _in_onboarding = True
             pending_handler = result.pending_handler
             wizard_step = result.wizard_step
-        elif result.refresh:
-            print_header(state, full=True)
 
+    # --- Result handler (closure — can update session refs via nonlocal) ---
     def _handle_result(result) -> None:
         nonlocal pending_handler, wizard_step, launch_request
+        nonlocal agent_session, ui, agent_project
+
         print_result(result)
+
         if result.prompt and result.pending_handler:
             pending_handler = result.pending_handler
             wizard_step = result.wizard_step
-        if result.refresh:
-            print_header(state, full=True)
+
+        if result.reset_session:
+            _save_session(agent_project, agent_session.messages)
+            agent_session, ui = _make_agent_session(state.active_project or project_path, cfg)
+            agent_project = state.active_project or project_path
+            pad = content_pad()
+            console.print(f"{pad}[{DIM}]Session cleared.[/{DIM}]")
+        elif result.refresh:
+            new_project = state.active_project or project_path
+            if new_project != agent_project:
+                _save_session(agent_project, agent_session.messages)
+                agent_session, ui = _make_agent_session(new_project, cfg)
+                agent_project = new_project
+
         if result.launch_command and result.launch_cwd:
             launch_request = (result.launch_command, result.launch_cwd)
 
+    # --- Run initial task from CLI (ara "fix the bug") ---
+    if cli.initial_task and not _in_onboarding:
+        _run_task_in_session(cli.initial_task, agent_session, ui)
+
+    # --- Main REPL loop ---
     while True:
         try:
             print_separator()
             prompt_markup = build_prompt(state, wizard_step)
-            raw = session.prompt(
+            raw = prompt_session.prompt(
                 HTML(prompt_markup),
                 completer=None if pending_handler else SmartCompleter(),
             )
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
+            # Ctrl+D — clean exit
             break
+        except KeyboardInterrupt:
+            # Ctrl+C — interrupt but stay in loop (like Claude Code)
+            console.print()
+            continue
         except Exception as exc:
-            # Connection lost or terminal issue — log and exit gracefully
             print_error(f"Terminal error ({type(exc).__name__}): {exc}")
             break
 
@@ -439,7 +711,7 @@ def run() -> None:
         if not command:
             continue
 
-        # Wizard mode
+        # --- Wizard / pending handler mode ---
         if pending_handler:
             if command.lower() == "q":
                 pending_handler = None
@@ -467,32 +739,51 @@ def run() -> None:
                 break
             continue
 
-        # Normal dispatch
+        # --- Shell passthrough: !cmd ---
+        if command.startswith("!"):
+            _run_shell_command(command[1:].strip(), state.active_project or cwd)
+            continue
+
+        # --- Known TUI commands (slash, natural language, shortcuts) ---
         try:
-            result, launch, should_break = _dispatch_command(state, command)
+            result, launch, should_break, matched = _dispatch_command(state, command)
         except Exception as exc:
             print_error(f"Command failed ({type(exc).__name__}): {exc}")
             continue
-        if result:
-            _handle_result(result)
-        if launch:
-            launch_request = launch
-        if should_break or (result and result.quit_app):
-            break
 
+        if matched:
+            if result:
+                _handle_result(result)
+            if launch:
+                launch_request = launch
+            if should_break or (result and result.quit_app):
+                break
+            continue
+
+        # --- Agent fallback: anything unrecognised goes to the LLM ---
+        if state.active_project:
+            _run_task_in_session(command, agent_session, ui)
+            continue
+
+        # No active project and no match
+        _suggest_alternatives(command)
+
+    # --- Save session on clean exit ---
+    _save_session(agent_project, agent_session.messages)
+
+    # --- Hand off to external program (lazygit / claude) ---
     if launch_request:
-        cmd, cwd = launch_request
+        cmd, launch_cwd = launch_request
         os.environ.update(get_auth_env())
         try:
-            os.chdir(str(cwd))
+            os.chdir(str(launch_cwd))
         except OSError:
-            print_warning(f"Directory not accessible: {cwd}")
+            print_warning(f"Directory not accessible: {launch_cwd}")
             return
         try:
             os.execvp(cmd, [cmd])
         except OSError as exc:
             print_error(f"Failed to launch [bold]{cmd}[/bold]: {exc}")
-            return
 
 
 if __name__ == "__main__":
