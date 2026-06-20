@@ -25,3 +25,4 @@ class CommandResult:
     style: str | None = None
     wizard_step: tuple[int, int, str] | None = None
     reset_session: bool = False
+    compact_session: bool = False

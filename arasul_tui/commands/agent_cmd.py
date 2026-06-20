@@ -639,10 +639,62 @@ async def _run_explain_async(task: str, project_path: Path, cfg: AgentConfig, ui
 
 def cmd_new_session(state: TuiState, args: list[str]) -> CommandResult:
     """Clear the current conversation and start fresh."""
-    from arasul_tui.core.ui import console, content_pad
     pad = content_pad()
     console.print(f"{pad}[{DIM}]Starting new session…[/{DIM}]")
     return CommandResult(ok=True, style="silent", reset_session=True)
+
+
+def cmd_compact(state: TuiState, args: list[str]) -> CommandResult:
+    """Compact (summarise) the current conversation to free up context budget."""
+    return CommandResult(ok=True, style="silent", compact_session=True)
+
+
+def cmd_init_ara(state: TuiState, args: list[str]) -> CommandResult:
+    """Create an ARA.md context file in the active project."""
+    if not state.active_project:
+        print_warning("No active project.")
+        return CommandResult(ok=False, style="silent")
+
+    ara_file = state.active_project / "ARA.md"
+    pad = content_pad()
+
+    if ara_file.exists():
+        console.print(f"{pad}[{WARNING}]ARA.md already exists.[/{WARNING}]  [{DIM}]{ara_file}[/{DIM}]")
+        return CommandResult(ok=True, style="silent")
+
+    template = f"""\
+# {state.active_project.name}
+
+## Purpose
+<!-- Describe what this project does -->
+
+## Architecture
+<!-- Key architectural decisions, patterns, and conventions -->
+
+## Development Notes
+<!-- Important notes for the AI assistant:
+     - Which files/dirs are off-limits?
+     - Build commands (make build, npm run dev, etc.)
+     - Test commands (pytest, jest, etc.)
+     - Any gotchas or constraints to be aware of?
+-->
+
+## Quick Commands
+<!-- e.g.
+    build:  npm run build
+    test:   pytest tests/ -q
+    lint:   ruff check .
+-->
+"""
+    try:
+        ara_file.write_text(template, encoding="utf-8")
+        console.print(f"{pad}[{SUCCESS}]✓[/{SUCCESS}]  ARA.md created → [{DIM}]{ara_file}[/{DIM}]")
+        console.print(f"{pad}   [{DIM}]Edit it to give the agent context about your project.[/{DIM}]")
+    except OSError as exc:
+        print_warning(f"Could not create ARA.md: {exc}")
+        return CommandResult(ok=False, style="silent")
+
+    return CommandResult(ok=True, style="silent")
 
 
 def _get_git_diff(project_path: Path, ref: str | None = None) -> tuple[str | None, bool]:

@@ -112,31 +112,75 @@ Rules:
 - Use search_files to locate relevant code before assuming file paths.
 - Be concise. The user sees your tool calls; avoid re-describing what they already show."""
 
-_CLAUDE_MD_MAX_CHARS = 12_000  # ≈ 3000 tokens — stays within our budget
+_CTX_FILE_MAX_CHARS = 12_000  # ≈ 3000 tokens per file
 
 
-def _read_claude_md(project_path: Path) -> str:
-    """Return the project's CLAUDE.md content, or empty string if absent."""
-    claude_file = project_path / "CLAUDE.md"
-    if not claude_file.is_file():
+def _read_context_file(path: Path) -> str:
+    """Read a context file (ARA.md / CLAUDE.md), returning empty string if absent/unreadable."""
+    if not path.is_file():
         return ""
     try:
-        content = claude_file.read_text(encoding="utf-8", errors="replace").strip()
+        content = path.read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
         return ""
     if not content:
         return ""
-    if len(content) > _CLAUDE_MD_MAX_CHARS:
-        content = content[:_CLAUDE_MD_MAX_CHARS] + "\n... (CLAUDE.md truncated)"
-        log.debug("CLAUDE.md exceeds %d chars; truncated", _CLAUDE_MD_MAX_CHARS)
-    return f"Project instructions (CLAUDE.md):\n{content}"
+    if len(content) > _CTX_FILE_MAX_CHARS:
+        content = content[:_CTX_FILE_MAX_CHARS] + "\n... (truncated)"
+        log.debug("%s exceeds %d chars; truncated", path.name, _CTX_FILE_MAX_CHARS)
+    return content
+
+
+def _read_project_context(project_path: Path) -> str:
+    """Load ARA.md context from global → parent dirs → project directory.
+
+    Priority order (last wins in case of conflict):
+      ~/.config/arasul/ARA.md   — global, applies to all projects
+      <parent>/ARA.md           — workspace / monorepo level (any ancestor up to home)
+      <project>/ARA.md          — project-specific instructions
+      <project>/CLAUDE.md       — backward compat (Claude Code files)
+    """
+    home = Path.home()
+    sections: list[str] = []
+
+    # 1. Global ARA.md
+    global_ara = home / ".config" / "arasul" / "ARA.md"
+    txt = _read_context_file(global_ara)
+    if txt:
+        sections.append(f"## Global (ARA.md)\n{txt}")
+
+    # 2. Parent directories (from outermost ancestor to immediate parent)
+    parents: list[Path] = []
+    current = project_path.parent
+    while current != current.parent and str(current) != str(home):
+        candidates = [current / "ARA.md"]
+        for f in candidates:
+            if f.is_file():
+                parents.append(f)
+        current = current.parent
+    for f in reversed(parents):
+        txt = _read_context_file(f)
+        if txt:
+            sections.append(f"## {f.parent.name}/ARA.md\n{txt}")
+
+    # 3. Project-level: ARA.md (preferred) then CLAUDE.md (fallback)
+    for name in ("ARA.md", "CLAUDE.md"):
+        f = project_path / name
+        txt = _read_context_file(f)
+        if txt:
+            sections.append(f"## {name}\n{txt}")
+            break
+
+    if not sections:
+        return ""
+    return "Project context files:\n\n" + "\n\n".join(sections)
 
 
 def _build_system_prompt(project_path: Path, repo_map_text: str, think: bool = True) -> str:
     parts = [_SYSTEM_CORE.format(project_name=project_path.name)]
-    claude_md = _read_claude_md(project_path)
-    if claude_md:
-        parts.append(claude_md)
+    ctx = _read_project_context(project_path)
+    if ctx:
+        parts.append(ctx)
     parts.append(repo_map_text or "(empty project — no source files found)")
     system = "\n\n".join(parts)
     if not think:

@@ -51,8 +51,8 @@ def test_exit_command(state: TuiState):
 
 
 def test_registry_command_count():
-    """Registry has exactly 28 commands (includes commit + explain added in Phase 5)."""
-    assert len(REGISTRY.names()) == 29
+    """Registry has exactly 31 commands (new, compact, init added in Phase 6)."""
+    assert len(REGISTRY.names()) == 31
 
 
 def test_slash_only(state: TuiState):

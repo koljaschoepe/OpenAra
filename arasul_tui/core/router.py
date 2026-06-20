@@ -8,7 +8,9 @@ from arasul_tui.commands import (
     cmd_agent,
     cmd_auth,
     cmd_commit,
+    cmd_compact,
     cmd_explain,
+    cmd_init_ara,
     cmd_new_session,
     cmd_review,
     cmd_browser,
@@ -328,6 +330,24 @@ def build_registry() -> CommandRegistry:
             "Clear conversation and start fresh",
             category="Agent",
             aliases=["new session", "clear session", "reset session", "clear"],
+        )
+    )
+    reg.register(
+        CommandSpec(
+            "compact",
+            cmd_compact,
+            "Summarise conversation to free context budget",
+            category="Agent",
+            aliases=["compress context", "compact context"],
+        )
+    )
+    reg.register(
+        CommandSpec(
+            "init",
+            cmd_init_ara,
+            "Create ARA.md context file for this project",
+            category="Agent",
+            aliases=["init ara", "create ara.md", "ara init"],
         )
     )
 

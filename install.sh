@@ -128,23 +128,13 @@ fi
 if [[ -z "$SERVER_URL" && -z "$SSH_HOST" ]]; then
   h "Server configuration"
   echo ""
-  echo -e "  How is your Ollama server accessible?"
-  echo -e "  ${DIM}1${RESET}  Direct URL   ${DIM}http://hostname:11434/v1${RESET}"
-  echo -e "  ${DIM}2${RESET}  SSH tunnel   ${DIM}Ollama port not directly exposed${RESET}"
+  echo -e "  Enter the URL of your Ollama server."
+  echo -e "  ${DIM}Examples:${RESET}"
+  echo -e "  ${DIM}  http://192.168.1.100:11434/v1${RESET}"
+  echo -e "  ${DIM}  http://jetson.local:11434/v1${RESET}"
+  echo -e "  ${DIM}  http://jetson.uni-example.de:11434/v1${RESET}"
   echo ""
-  read -rp "  Choice [1/2, default 1]: " CHOICE
-  case "${CHOICE:-1}" in
-    2)
-      echo ""
-      read -rp "  SSH host (e.g. user@jetson.uni.edu or arasul@arasul.tail746d9b.ts.net): " SSH_HOST
-      read -rp "  Ollama host:port inside server [${OLLAMA_HOST}:${OLLAMA_PORT}]: " SPEC
-      if [[ -n "$SPEC" ]]; then IFS=: read -r OLLAMA_HOST OLLAMA_PORT <<< "$SPEC"; fi
-      ;;
-    *)
-      echo ""
-      read -rp "  Ollama URL (e.g. http://jetson.local:11434/v1): " SERVER_URL
-      ;;
-  esac
+  read -rp "  Ollama URL: " SERVER_URL
   echo ""
   read -rp "  License key (optional — press Enter to skip): " LICENSE_KEY
 fi

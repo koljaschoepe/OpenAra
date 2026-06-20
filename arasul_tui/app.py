@@ -8,6 +8,8 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -92,6 +94,7 @@ def _print_help() -> None:
 
   In the REPL:
     <task>                Send a task to the agent
+    #<fact>               Save a note to ARA.md (e.g. #auth uses JWT RS256)
     !<cmd>                Run a shell command directly (e.g. !git status)
     /help                 All slash commands
     /review [ref]         AI code review of git changes
@@ -175,6 +178,74 @@ def _run_task_in_session(task: str, agent_session: AgentSession, ui: ChatUI) -> 
 
 
 # ---------------------------------------------------------------------------
+# ARA.md helpers
+# ---------------------------------------------------------------------------
+
+def _append_to_ara_md(fact: str, project_path: Path) -> None:
+    """Append a fact line to <project>/ARA.md — creates the file if absent."""
+    ara = project_path / "ARA.md"
+    try:
+        if not ara.exists():
+            ara.write_text(
+                f"# {project_path.name}\n\n## Notes\n\n- {fact}\n",
+                encoding="utf-8",
+            )
+        else:
+            with ara.open("a", encoding="utf-8") as fh:
+                fh.write(f"- {fact}\n")
+        pad = content_pad()
+        console.print(f"{pad}[{DIM}]Saved to ARA.md[/{DIM}]")
+    except OSError as exc:
+        print_error(f"Could not write ARA.md: {exc}")
+
+
+async def _do_compact(session: "AgentSession", cfg: AgentConfig) -> None:
+    """Summarise conversation history and replace it with a compact form."""
+    from arasul_tui.agent.llm import LLMError, chat
+
+    if not session.messages:
+        return
+
+    # Build a short transcript (last 40 turns)
+    parts: list[str] = []
+    for m in session.messages[-40:]:
+        role = m.get("role", "")
+        content = m.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        if content:
+            parts.append(f"{role.upper()}: {str(content)[:600]}")
+
+    transcript = "\n".join(parts)
+    prompt = (
+        "Create a concise briefing of this conversation for a fresh agent taking over. "
+        "Include: what was accomplished, key decisions, current code state, what the user wants next.\n\n"
+        + transcript
+    )
+
+    try:
+        response = await chat(
+            messages=[{"role": "user", "content": prompt}],
+            system="You create concise conversation summaries.",
+            tools=[],
+            config=cfg,
+            on_token=None,
+        )
+        summary = response.text if response else "(summary unavailable)"
+    except (LLMError, Exception):
+        summary = "(summary unavailable — conversation truncated)"
+
+    session.messages = [
+        {"role": "user", "content": f"[Compact context]\n{summary}"},
+        {"role": "assistant", "content": "Understood. Continuing from the summary above."},
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Shell passthrough
 # ---------------------------------------------------------------------------
 
@@ -232,7 +303,7 @@ def _print_coding_header(project_path: Path, cfg: AgentConfig) -> None:
         pass
 
     console.print(
-        f"{pad}   [{DIM}]Type a task, or /help for commands · Ctrl+D to exit[/{DIM}]",
+        f"{pad}   [{DIM}]Type a task · #fact saves to ARA.md · /help for commands · Ctrl+D to exit[/{DIM}]",
         highlight=False,
     )
     console.print()
@@ -530,10 +601,22 @@ def _dispatch_command(state: TuiState, command: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# SSH tunnel (unchanged)
+# Connection helpers
 # ---------------------------------------------------------------------------
 
-def _ensure_tunnel_if_configured() -> None:
+def _check_direct_url(url: str) -> bool:
+    """Return True if the Ollama server at `url` responds within 3 s."""
+    base = url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    try:
+        with urllib.request.urlopen(base + "/api/version", timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _ensure_tunnel_if_configured(cfg: AgentConfig | None = None) -> None:
     from arasul_tui.core.tunnel import ensure_ssh_tunnel, get_install_config
 
     install = get_install_config()
@@ -552,8 +635,19 @@ def _ensure_tunnel_if_configured() -> None:
     if ok:
         console.print(f"{pad}[{DIM}]⟳  {msg}[/{DIM}]")
     else:
-        console.print(f"{pad}[{WARNING}]⚠  SSH tunnel failed: {msg}[/{WARNING}]")
-        console.print(f"{pad}[{DIM}]   Run: /agent check[/{DIM}]")
+        # Tunnel failed — check if the server URL is directly reachable
+        direct_ok = cfg and _check_direct_url(cfg.base_url)
+        if direct_ok:
+            console.print(
+                f"{pad}[{WARNING}]⚠  SSH tunnel failed ({msg})[/{WARNING}]"
+                f" — [{SUCCESS}]direct connection works ✓[/{SUCCESS}]"
+            )
+            console.print(
+                f"{pad}[{DIM}]   Tip: run [bold]ara setup[/bold] to switch to direct mode permanently.[/{DIM}]"
+            )
+        else:
+            console.print(f"{pad}[{WARNING}]⚠  SSH tunnel failed: {msg}[/{WARNING}]")
+            console.print(f"{pad}[{DIM}]   Run: ara setup — to reconfigure the server URL.[/{DIM}]")
 
 
 # ---------------------------------------------------------------------------
@@ -584,13 +678,13 @@ def run() -> None:
         print_error(f"Startup failed: {exc}")
         return
 
-    # --- SSH tunnel ---
-    _ensure_tunnel_if_configured()
-
     # --- Config ---
     cfg = load_agent_config()
     if cli.model_override:
         cfg.model = cli.model_override
+
+    # --- SSH tunnel (with direct-URL fallback) ---
+    _ensure_tunnel_if_configured(cfg)
 
     # --- Session continuity ---
     initial_messages: list[dict] | None = None
@@ -673,6 +767,12 @@ def run() -> None:
             agent_project = state.active_project or project_path
             pad = content_pad()
             console.print(f"{pad}[{DIM}]Session cleared.[/{DIM}]")
+        elif result.compact_session:
+            pad = content_pad()
+            console.print(f"{pad}[{DIM}]Compacting context …[/{DIM}]")
+            asyncio.run(_do_compact(agent_session, cfg))
+            turns = sum(1 for m in agent_session.messages if m.get("role") == "user")
+            console.print(f"{pad}[{DIM}]Done — context reduced to {turns} message(s).[/{DIM}]")
         elif result.refresh:
             new_project = state.active_project or project_path
             if new_project != agent_project:
@@ -737,6 +837,13 @@ def run() -> None:
             _handle_result(result)
             if result.quit_app:
                 break
+            continue
+
+        # --- ARA.md fact: #note ---
+        if command.startswith("#"):
+            fact = command[1:].strip()
+            if fact:
+                _append_to_ara_md(fact, state.active_project or project_path)
             continue
 
         # --- Shell passthrough: !cmd ---
