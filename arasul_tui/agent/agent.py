@@ -128,7 +128,7 @@ def _read_claude_md(project_path: Path) -> str:
         return ""
     if len(content) > _CLAUDE_MD_MAX_CHARS:
         content = content[:_CLAUDE_MD_MAX_CHARS] + "\n... (CLAUDE.md truncated)"
-        log.warning("CLAUDE.md exceeds %d chars; truncated", _CLAUDE_MD_MAX_CHARS)
+        log.debug("CLAUDE.md exceeds %d chars; truncated", _CLAUDE_MD_MAX_CHARS)
     return f"Project instructions (CLAUDE.md):\n{content}"
 
 
