@@ -169,6 +169,7 @@ class AgentSession:
         config: AgentConfig | None = None,
         callbacks: AgentCallbacks | None = None,
         approval: ApprovalCallback | None = None,
+        system_override: str | None = None,
     ) -> None:
         self.project_path = project_path
         self.cfg = config or load_agent_config()
@@ -178,16 +179,20 @@ class AgentSession:
         self.budget = TokenBudget(max_tokens=self.cfg.context_limit)
         self.messages: list[dict] = []
         self._last_hint: str = ""
+        self._has_system_override = system_override is not None
 
-        # Build initial system prompt (no task hint yet)
-        repo_map = RepoMap(project_path).render(token_budget=2048)
-        self.system = _build_system_prompt(project_path, repo_map, think=self.cfg.think)
+        if system_override is not None:
+            self.system = system_override + ("\n/no_think" if not self.cfg.think else "")
+        else:
+            # Build initial system prompt (no task hint yet)
+            repo_map = RepoMap(project_path).render(token_budget=2048)
+            self.system = _build_system_prompt(project_path, repo_map, think=self.cfg.think)
         self.budget.consume(self.system)
 
     async def run(self, task: str) -> AgentResult:
         """Execute one turn, continuing from prior conversation history."""
-        # Re-render repo map when the task hint changes (cheap re-rank)
-        if task != self._last_hint:
+        # Re-render repo map when the task hint changes (skipped when system is overridden)
+        if not self._has_system_override and task != self._last_hint:
             self._last_hint = task
             repo_map = RepoMap(self.project_path).render(token_budget=2048, hint=task)
             self.system = _build_system_prompt(self.project_path, repo_map, think=self.cfg.think)

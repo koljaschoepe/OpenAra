@@ -537,3 +537,147 @@ async def test_think_false_adds_no_think_to_system(tmp_path):
         await session.run("Do something")
 
     assert captured_systems and captured_systems[0].endswith("/no_think")
+
+
+# ---------------------------------------------------------------------------
+# AgentSession — system_override
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_system_override_used_as_is(tmp_path):
+    """system_override replaces the normal system prompt entirely."""
+    from unittest.mock import AsyncMock, patch
+    from arasul_tui.agent.agent import AgentSession
+    from arasul_tui.agent.config import AgentConfig
+    from arasul_tui.agent.llm import LLMResponse, Usage
+
+    captured: list[str] = []
+
+    async def mock_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        captured.append(system)
+        return LLMResponse(text="Done.", stop_reason="end_turn", usage=Usage(50, 50))
+
+    override = "You are a custom reviewer."
+    cfg = AgentConfig(base_url="http://localhost:11434/v1", model="qwen3:14b")
+    with patch("arasul_tui.agent.agent.chat", AsyncMock(side_effect=mock_chat)):
+        session = AgentSession(tmp_path, config=cfg, system_override=override)
+        await session.run("Review this")
+
+    assert captured[0] == override  # exact match, no repo map appended
+
+
+@pytest.mark.asyncio
+async def test_session_system_override_respects_no_think(tmp_path):
+    """system_override + think=False should append /no_think."""
+    from unittest.mock import AsyncMock, patch
+    from arasul_tui.agent.agent import AgentSession
+    from arasul_tui.agent.config import AgentConfig
+    from arasul_tui.agent.llm import LLMResponse, Usage
+
+    captured: list[str] = []
+
+    async def mock_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        captured.append(system)
+        return LLMResponse(text="Done.", stop_reason="end_turn", usage=Usage(50, 50))
+
+    override = "You are a reviewer."
+    cfg = AgentConfig(base_url="http://localhost:11434/v1", model="qwen3:14b", think=False)
+    with patch("arasul_tui.agent.agent.chat", AsyncMock(side_effect=mock_chat)):
+        session = AgentSession(tmp_path, config=cfg, system_override=override)
+        await session.run("Review")
+
+    assert captured[0] == override + "\n/no_think"
+
+
+@pytest.mark.asyncio
+async def test_session_system_not_refreshed_when_override_set(tmp_path):
+    """With system_override, the system prompt must not change between tasks."""
+    from unittest.mock import AsyncMock, patch
+    from arasul_tui.agent.agent import AgentSession
+    from arasul_tui.agent.config import AgentConfig
+    from arasul_tui.agent.llm import LLMResponse, Usage
+
+    systems: list[str] = []
+
+    async def mock_chat(messages, system, tools, config, on_token=None, on_tool_start=None):
+        systems.append(system)
+        return LLMResponse(text="Done.", stop_reason="end_turn", usage=Usage(50, 50))
+
+    override = "Fixed system."
+    cfg = AgentConfig(base_url="http://localhost:11434/v1", model="qwen3:14b")
+    with patch("arasul_tui.agent.agent.chat", AsyncMock(side_effect=mock_chat)):
+        session = AgentSession(tmp_path, config=cfg, system_override=override)
+        await session.run("Task A")
+        await session.run("Task B with a different hint")
+
+    assert systems[0] == systems[1] == override
+
+
+# ---------------------------------------------------------------------------
+# _get_git_diff helper
+# ---------------------------------------------------------------------------
+
+
+def test_get_git_diff_non_git_dir(tmp_path):
+    """Non-git directory returns (None, False)."""
+    from arasul_tui.commands.agent_cmd import _get_git_diff
+    diff, truncated = _get_git_diff(tmp_path)
+    assert diff is None
+    assert not truncated
+
+
+def test_get_git_diff_clean_git_repo(tmp_path):
+    """Clean git repo (no changes) returns ('', False)."""
+    import subprocess
+    from arasul_tui.commands.agent_cmd import _get_git_diff
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    diff, truncated = _get_git_diff(tmp_path)
+    assert diff == ""
+    assert not truncated
+
+
+def test_get_git_diff_with_changes(tmp_path):
+    """Git repo with uncommitted changes returns the diff."""
+    import subprocess
+    from arasul_tui.commands.agent_cmd import _get_git_diff
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+
+    # Create and commit a file
+    (tmp_path / "hello.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    # Modify the file (creates an unstaged diff)
+    (tmp_path / "hello.py").write_text("x = 2\n")
+
+    diff, truncated = _get_git_diff(tmp_path)
+    assert diff is not None
+    assert "hello.py" in diff
+    assert not truncated
+
+
+def test_get_git_diff_truncates_large_diffs(tmp_path, monkeypatch):
+    """Diffs larger than _MAX_REVIEW_DIFF_CHARS are truncated."""
+    import subprocess
+    from arasul_tui.commands import agent_cmd
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+    (tmp_path / "f.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    monkeypatch.setattr(agent_cmd, "_MAX_REVIEW_DIFF_CHARS", 5)
+    (tmp_path / "f.py").write_text("x = 99999\n")
+
+    diff, truncated = agent_cmd._get_git_diff(tmp_path)
+    assert truncated
+    assert len(diff) == 5

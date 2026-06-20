@@ -1,6 +1,6 @@
 [project]
 name = "arasul"
-version = "0.5.0"
+version = "0.6.0"
 description = "Interactive TUI for managing headless Linux SBC development servers (Jetson, Raspberry Pi, generic)"
 readme = "README.md"
 license = {text = "BUSL-1.1"}

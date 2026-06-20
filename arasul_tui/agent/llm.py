@@ -183,7 +183,19 @@ async def chat(
             if attempt < 2:
                 await asyncio.sleep(0.5 * (attempt + 1))
 
-        except (APIConnectionError, APITimeoutError, InternalServerError) as exc:  # type: ignore[misc]
+        except (APIConnectionError, APITimeoutError) as exc:  # type: ignore[misc]
+            last_error = exc
+            log.warning("Transient error on attempt %d/3: %s", attempt + 1, exc)
+            if attempt < 2:
+                await asyncio.sleep(1.0 * (attempt + 1))
+            else:
+                raise LLMError(
+                    f"Cannot reach Ollama at {config.base_url}\n"
+                    "  → Run 'agent check' to diagnose the connection\n"
+                    "  → Update with: agent config url http://yourserver:11434/v1"
+                ) from exc
+
+        except InternalServerError as exc:  # type: ignore[misc]
             last_error = exc
             log.warning("Transient error on attempt %d/3: %s", attempt + 1, exc)
             if attempt < 2:
@@ -325,3 +337,22 @@ def estimate_messages_tokens(messages: list[dict]) -> int:
                 if isinstance(part, dict):
                     total += estimate_tokens(str(part))
     return total
+
+
+async def check_connection(base_url: str, timeout: float = 5.0) -> dict:
+    """Test Ollama connectivity. Returns diagnostic dict with ok, latency_ms, models, error."""
+    import time
+
+    if not _OPENAI_AVAILABLE:
+        return {"ok": False, "error": "openai not installed — run: pip install 'openai>=1.50.0'"}
+
+    client = AsyncOpenAI(base_url=base_url, api_key="ollama", timeout=timeout)
+    start = time.monotonic()
+    try:
+        models_response = await client.models.list()
+        latency_ms = int((time.monotonic() - start) * 1000)
+        model_ids = [m.id for m in models_response.data]
+        return {"ok": True, "latency_ms": latency_ms, "models": model_ids}
+    except Exception as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return {"ok": False, "error": str(exc), "latency_ms": latency_ms}
